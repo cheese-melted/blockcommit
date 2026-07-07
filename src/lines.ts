@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 export interface LineRecord {
   path: string;
   lineNo: number;
@@ -7,6 +5,8 @@ export interface LineRecord {
   byteEnd: number;
   bytes: Buffer;
   key: string;
+  /** Whole-file record (binary mode): always eligible to anchor a pairing. */
+  atomic?: boolean;
 }
 
 export function splitLineRecords(path: string, bytes: Buffer): LineRecord[] {
@@ -48,7 +48,31 @@ export function splitLineRecords(path: string, bytes: Buffer): LineRecord[] {
 }
 
 export function lineKey(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return bytes.toString("latin1");
+}
+
+const binarySniffBytes = 8000;
+
+export function isBinary(bytes: Buffer): boolean {
+  const end = Math.min(bytes.length, binarySniffBytes);
+  return bytes.subarray(0, end).includes(0);
+}
+
+export function singleRecord(path: string, bytes: Buffer): LineRecord[] {
+  if (bytes.length === 0) {
+    return [];
+  }
+  return [
+    {
+      path,
+      lineNo: 1,
+      byteStart: 0,
+      byteEnd: bytes.length,
+      bytes: Buffer.from(bytes),
+      key: lineKey(bytes),
+      atomic: true
+    }
+  ];
 }
 
 export function concatLineBytes(lines: LineRecord[]): Buffer {
@@ -59,6 +83,7 @@ export function spanForLines(lines: LineRecord[]): {
   path: string;
   start_line: number;
   end_line: number;
+  line_count: number;
   byte_start: number;
   byte_end: number;
 } {
@@ -72,6 +97,7 @@ export function spanForLines(lines: LineRecord[]): {
     path: first.path,
     start_line: first.lineNo,
     end_line: last.lineNo,
+    line_count: last.lineNo - first.lineNo + 1,
     byte_start: first.byteStart,
     byte_end: last.byteEnd
   };

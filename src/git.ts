@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const gitlinkMode = "160000";
 
 export interface CommitInfo {
   repo: string;
@@ -12,9 +13,27 @@ export interface CommitInfo {
 
 export interface FilePair {
   path: string;
+  status: string;
+  oldMode: string | null;
+  newMode: string | null;
+  oldOid: string | null;
+  newOid: string | null;
+  oldExists: boolean;
+  newExists: boolean;
   oldBytes: Buffer | null;
   newBytes: Buffer | null;
   diff: string;
+  gitBinary: boolean;
+  unparsedDiff: boolean;
+}
+
+interface RawEntry {
+  oldMode: string;
+  newMode: string;
+  oldSha: string;
+  newSha: string;
+  status: string;
+  path: string;
 }
 
 export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
@@ -35,51 +54,177 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
   };
 }
 
+export function listCommits(cwd: string, range: string): string[] {
+  const repo = gitText(cwd, ["rev-parse", "--show-toplevel"]).trim();
+  return gitText(repo, ["rev-list", "--no-merges", "--reverse", range])
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 export function readChangedFilePairs(info: CommitInfo): FilePair[] {
-  const paths = changedPaths(info.repo, info.diffBase, info.commit);
-  return paths.map((path) => ({
-    path,
-    oldBytes: blobExists(info.repo, info.diffBase, path) ? gitBuffer(info.repo, ["show", `${info.diffBase}:${path}`]) : null,
-    newBytes: blobExists(info.repo, info.commit, path) ? gitBuffer(info.repo, ["show", `${info.commit}:${path}`]) : null,
-    diff: gitText(info.repo, [
+  const entries = parseRawEntries(
+    gitBuffer(info.repo, [
+      "diff",
+      "--raw",
+      "-z",
+      "--no-renames",
+      "--full-index",
+      "--abbrev=40",
+      info.diffBase,
+      info.commit
+    ])
+  );
+  const blobs = readBlobs(info.repo, collectBlobShas(entries));
+  const sections = splitPatchSections(
+    gitText(info.repo, [
       "diff",
       "--no-ext-diff",
       "--no-color",
       "--no-renames",
+      "--no-textconv",
+      "--submodule=short",
       "--unified=0",
       info.diffBase,
-      info.commit,
-      "--",
-      path
+      info.commit
     ])
-  }));
+  );
+
+  const expectedSections = entries.reduce((count, entry) => count + patchSectionsFor(entry), 0);
+  const parsedSections = sections.length === expectedSections;
+
+  const pairs: FilePair[] = [];
+  let sectionIndex = 0;
+  for (const entry of entries) {
+    const take = parsedSections ? patchSectionsFor(entry) : 0;
+    const diff = parsedSections ? sections.slice(sectionIndex, sectionIndex + take).join("") : "";
+    sectionIndex += take;
+
+    const oldIsBlob = isBlobSide(entry.oldMode, entry.oldSha);
+    const newIsBlob = isBlobSide(entry.newMode, entry.newSha);
+    const oldExists = !isZeroOid(entry.oldSha);
+    const newExists = !isZeroOid(entry.newSha);
+
+    pairs.push({
+      path: entry.path,
+      status: entry.status,
+      oldMode: oldExists ? entry.oldMode : null,
+      newMode: newExists ? entry.newMode : null,
+      oldOid: oldExists ? entry.oldSha : null,
+      newOid: newExists ? entry.newSha : null,
+      oldExists,
+      newExists,
+      oldBytes: oldIsBlob ? blobs.get(entry.oldSha) ?? null : null,
+      newBytes: newIsBlob ? blobs.get(entry.newSha) ?? null : null,
+      diff,
+      gitBinary: /^Binary files /m.test(diff) || /^GIT binary patch/m.test(diff),
+      unparsedDiff: !parsedSections
+    });
+  }
+
+  return pairs;
 }
 
-function changedPaths(repo: string, base: string, commit: string): string[] {
-  const output = gitBuffer(repo, ["diff", "--name-only", "-z", "--no-renames", base, commit]);
-  return output
-    .toString("utf8")
-    .split("\0")
-    .filter((path) => path.length > 0);
+function patchSectionsFor(entry: RawEntry): number {
+  return entry.status === "T" ? 2 : 1;
 }
 
-function blobExists(repo: string, rev: string, path: string): boolean {
-  const result = spawnSync("git", ["cat-file", "-e", `${rev}:${path}`], {
-    cwd: repo,
-    encoding: "buffer"
-  });
-  return result.status === 0;
+function isBlobSide(mode: string, sha: string): boolean {
+  return mode !== gitlinkMode && !isZeroOid(sha);
+}
+
+function isZeroOid(sha: string): boolean {
+  return /^0+$/.test(sha);
+}
+
+function collectBlobShas(entries: RawEntry[]): string[] {
+  const shas = new Set<string>();
+  for (const entry of entries) {
+    if (isBlobSide(entry.oldMode, entry.oldSha)) {
+      shas.add(entry.oldSha);
+    }
+    if (isBlobSide(entry.newMode, entry.newSha)) {
+      shas.add(entry.newSha);
+    }
+  }
+  return [...shas];
+}
+
+function parseRawEntries(output: Buffer): RawEntry[] {
+  const tokens = output.toString("utf8").split("\0");
+  const entries: RawEntry[] = [];
+
+  for (let index = 0; index + 1 < tokens.length; index += 2) {
+    const meta = tokens[index];
+    const path = tokens[index + 1];
+    if (!meta.startsWith(":")) {
+      throw new Error(`unexpected git diff --raw entry: ${meta}`);
+    }
+    const [oldMode, newMode, oldSha, newSha, status] = meta.slice(1).split(" ");
+    entries.push({ oldMode, newMode, oldSha, newSha, status, path });
+  }
+
+  return entries;
+}
+
+function splitPatchSections(patch: string): string[] {
+  if (patch.length === 0) {
+    return [];
+  }
+
+  const starts: number[] = [];
+  const header = /^diff --git /gm;
+  let match: RegExpExecArray | null;
+  while ((match = header.exec(patch)) !== null) {
+    starts.push(match.index);
+  }
+  if (starts.length === 0 || starts[0] !== 0) {
+    throw new Error("unexpected git diff output: missing diff --git header");
+  }
+
+  return starts.map((start, index) => patch.slice(start, starts[index + 1] ?? patch.length));
+}
+
+function readBlobs(repo: string, shas: string[]): Map<string, Buffer> {
+  const blobs = new Map<string, Buffer>();
+  if (shas.length === 0) {
+    return blobs;
+  }
+
+  const output = gitBuffer(repo, ["cat-file", "--batch"], shas.join("\n") + "\n");
+  let cursor = 0;
+  for (const sha of shas) {
+    const newline = output.indexOf(0x0a, cursor);
+    if (newline === -1) {
+      throw new Error("unexpected end of git cat-file --batch output");
+    }
+    const header = output.subarray(cursor, newline).toString("utf8");
+    cursor = newline + 1;
+    const fields = header.split(" ");
+    if (fields[1] === "missing") {
+      throw new Error(`git object ${sha} is missing`);
+    }
+    const size = Number(fields[2]);
+    if (!Number.isInteger(size) || size < 0) {
+      throw new Error(`unexpected git cat-file header: ${header}`);
+    }
+    blobs.set(sha, Buffer.from(output.subarray(cursor, cursor + size)));
+    cursor += size + 1;
+  }
+
+  return blobs;
 }
 
 function gitText(cwd: string, args: string[]): string {
   return gitBuffer(cwd, args).toString("utf8");
 }
 
-function gitBuffer(cwd: string, args: string[]): Buffer {
+function gitBuffer(cwd: string, args: string[], input?: string): Buffer {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "buffer",
-    maxBuffer: 1024 * 1024 * 256
+    input: input === undefined ? undefined : Buffer.from(input, "utf8"),
+    maxBuffer: 1024 * 1024 * 1024
   });
 
   if (result.status !== 0) {
