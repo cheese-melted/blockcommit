@@ -37,7 +37,7 @@
   ],
   "scripts": {
     "test": "bun test",
-    "build": "bun build ./src/cli.ts ./src/index.ts --target=node --outdir=dist && tsc -p tsconfig.json",
+    "build": "rm -rf dist && bun build ./src/cli.ts ./src/index.ts --target=node --outdir=dist && tsc -p tsconfig.json",
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { lineId, renderBlockPatch, type BlockPatchRenderResult, type RenderContext } from "./blockpatch";
+import { lineId, renderBlockPatch, type BlockPatchRenderResult, type BlockPatchRendering, type RenderContext } from "./blockpatch";
 import { getCommitInfo, readChangedFilePairs, type CommitInfo, type FilePair } from "./git";
 import { deriveIdentity } from "./identity";
 import {
@@ -16,11 +16,9 @@ import {
   type BlockKind,
   type BlockCommitDigest,
   type ChangedFileDigest,
-  type BlockPatchRendering,
   type LineDigestStatus,
   type LineMoveBlock,
   type LineSpan,
-  type MatchMetadata,
   type UnsupportedReason,
   type PayloadEncoding
 } from "./types";
@@ -45,8 +43,10 @@ interface ParsedChanges {
 interface PairedLine {
   src: RemovedLine;
   dst: AddedLine;
-  match: MatchMetadata;
+  chosenBy: PairingStage;
 }
+
+type PairingStage = "unique_anchor" | "whole_file_identity" | "dominant_path_identity" | "exact_block_fallback" | "unpaired";
 
 interface LineOccurrenceCounts {
   old: Map<string, number>;
@@ -170,7 +170,6 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
   const builtBlocks = drafts.map((draft) => buildBlock(draft, renderContext));
   const blocks = builtBlocks.map((built) => built.block);
   const blockpatches = builtBlocks.map((built) => built.blockpatch);
-  const rendered = blockpatches.filter((blockpatch) => blockpatch.status === "rendered").length;
 
   const digest: BlockCommitDigest = {
     schema_version: schemaVersion,
@@ -185,9 +184,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
       blocks: blocks.length,
       moves: blocks.filter((block) => block.kind === "move").length,
       insertions: blocks.filter((block) => block.kind === "insert").length,
-      deletions: blocks.filter((block) => block.kind === "delete").length,
-      rendered_blockpatches: rendered,
-      unsupported_blockpatches: blocks.length - rendered
+      deletions: blocks.filter((block) => block.kind === "delete").length
     }
   };
 
@@ -385,7 +382,6 @@ function pairLines(
 
   pairDominantPathIdentityBlocks(removed, added, files, paired);
   pairExactUnmatchedBlocksByObjective(removed, added, paired);
-  annotateMatchMetadata(paired, removed, added);
   return paired;
 }
 
@@ -454,7 +450,7 @@ function uniqueContentAnchors(
     if (dst === undefined || dst === null) {
       continue;
     }
-    anchors.push({ src, dst, match: defaultMatchMetadata() });
+    anchors.push({ src, dst, chosenBy: "unique_anchor" });
   }
   return anchors;
 }
@@ -485,7 +481,7 @@ function extendPairing(
     if (nextSrc.line.key !== nextDst.line.key) {
       return;
     }
-    pairUp(nextSrc, nextDst, paired, anchor.match.chosen_by);
+    pairUp(nextSrc, nextDst, paired, anchor.chosenBy);
     src = nextSrc.line;
     dst = nextDst.line;
   }
@@ -495,11 +491,11 @@ function pairUp(
   src: RemovedLine,
   dst: AddedLine,
   paired: PairedLine[],
-  chosenBy: MatchMetadata["chosen_by"] = "unique_anchor"
+  chosenBy: PairingStage = "unique_anchor"
 ): PairedLine {
   src.paired = dst;
   dst.paired = src;
-  const pair = { src, dst, match: defaultMatchMetadata(chosenBy) };
+  const pair = { src, dst, chosenBy };
   paired.push(pair);
   return pair;
 }
@@ -557,7 +553,7 @@ function isCompleteNewFileGroup(group: AddedLine[], filesByPath: Map<string, Cha
 interface ExactBlockCandidate {
   srcGroup: RemovedLine[];
   dstGroup: AddedLine[];
-  chosenBy: MatchMetadata["chosen_by"];
+  chosenBy: PairingStage;
   score: number;
 }
 
@@ -801,73 +797,6 @@ function pairableExactFallbackGroup(group: Array<AddedLine | RemovedLine>): bool
   return hasAnchorContent(concatLineBytes(group.map((line) => line.line)).toString("latin1"));
 }
 
-function annotateMatchMetadata(paired: PairedLine[], removed: RemovedLine[], added: AddedLine[]): void {
-  const removedCounts = countByLineKey(removed.map((line) => line.line));
-  const addedCounts = countByLineKey(added.map((line) => line.line));
-
-  for (const pair of paired) {
-    const duplicateRemovedCandidates = Math.max(0, (removedCounts.get(pair.src.line.key) ?? 0) - 1);
-    const duplicateAddedCandidates = Math.max(0, (addedCounts.get(pair.dst.line.key) ?? 0) - 1);
-    const ambiguous = pair.match.ambiguous || duplicateRemovedCandidates > 0 || duplicateAddedCandidates > 0;
-    pair.match = {
-      ...pair.match,
-      confidence: ambiguous ? "ambiguous" : pair.match.confidence,
-      ambiguous,
-      duplicate_removed_candidates: duplicateRemovedCandidates,
-      duplicate_added_candidates: duplicateAddedCandidates
-    };
-  }
-}
-
-function countByLineKey(lines: LineRecord[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const line of lines) {
-    counts.set(line.key, (counts.get(line.key) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function defaultMatchMetadata(chosenBy: MatchMetadata["chosen_by"] = "unpaired"): MatchMetadata {
-  return {
-    algorithm: digestAlgorithm.name,
-    confidence: defaultConfidence(chosenBy),
-    ambiguous: false,
-    duplicate_removed_candidates: 0,
-    duplicate_added_candidates: 0,
-    identity_preserving_score: defaultIdentityPreservingScore(chosenBy),
-    chosen_by: chosenBy
-  };
-}
-
-function defaultConfidence(chosenBy: MatchMetadata["chosen_by"]): MatchMetadata["confidence"] {
-  if (chosenBy === "whole_file_identity") {
-    return "exact";
-  }
-  if (chosenBy === "unique_anchor" || chosenBy === "dominant_path_identity" || chosenBy === "exact_block_fallback") {
-    return "strong";
-  }
-  return "weak";
-}
-
-function defaultIdentityPreservingScore(chosenBy: MatchMetadata["chosen_by"]): number {
-  if (chosenBy === "whole_file_identity") {
-    return 1000;
-  }
-  if (chosenBy === "unique_anchor") {
-    return 500;
-  }
-  if (chosenBy === "dominant_path_identity") {
-    return 400;
-  }
-  if (chosenBy === "exact_block_fallback") {
-    return 300;
-  }
-  if (chosenBy === "best_effort_tiebreak") {
-    return 100;
-  }
-  return 0;
-}
-
 function groupPairedLines(paired: PairedLine[]): BlockDraft[] {
   const sorted = [...paired].sort((left, right) =>
     compareLineRecords(left.src.line, right.src.line) || compareLineRecords(left.dst.line, right.dst.line)
@@ -980,9 +909,7 @@ function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
     payload_bytes: payload.length,
     payload_lines: srcLines?.length ?? dstLines?.length ?? 0,
     payload_encoding: encoded.encoding,
-    ...encoded.fields,
-    match: blockMatchMetadata(draft),
-    blockpatch: canonicalBlockpatch(renderedBlockpatch)
+    ...encoded.fields
   };
   const block: LineMoveBlock = kind === "move"
     ? { ...base, kind, src: src!, dst: dst! }
@@ -1013,45 +940,6 @@ function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | nu
     .update(payloadSha)
     .digest("hex");
   return `bc_${hash.slice(0, 16)}`;
-}
-
-function blockMatchMetadata(draft: BlockDraft): MatchMetadata {
-  const pairs = draft.pairedLines ?? [];
-  if (pairs.length === 0) {
-    return defaultMatchMetadata();
-  }
-  const ambiguous = pairs.some((pair) => pair.match.ambiguous);
-  const chosenBy = strongestChosenBy(pairs.map((pair) => pair.match.chosen_by));
-
-  return {
-    algorithm: digestAlgorithm.name,
-    confidence: ambiguous ? "ambiguous" : strongestConfidence(pairs.map((pair) => pair.match.confidence)),
-    ambiguous,
-    duplicate_removed_candidates: Math.max(...pairs.map((pair) => pair.match.duplicate_removed_candidates)),
-    duplicate_added_candidates: Math.max(...pairs.map((pair) => pair.match.duplicate_added_candidates)),
-    identity_preserving_score: pairs.reduce(
-      (score, pair) => score + pair.match.identity_preserving_score,
-      pairs.length
-    ),
-    chosen_by: chosenBy
-  };
-}
-
-function strongestChosenBy(values: MatchMetadata["chosen_by"][]): MatchMetadata["chosen_by"] {
-  const priority: MatchMetadata["chosen_by"][] = [
-    "whole_file_identity",
-    "dominant_path_identity",
-    "unique_anchor",
-    "exact_block_fallback",
-    "best_effort_tiebreak",
-    "unpaired"
-  ];
-  return priority.find((value) => values.includes(value)) ?? "unpaired";
-}
-
-function strongestConfidence(values: MatchMetadata["confidence"][]): MatchMetadata["confidence"] {
-  const priority: MatchMetadata["confidence"][] = ["exact", "strong", "weak", "ambiguous"];
-  return priority.find((value) => values.includes(value)) ?? "weak";
 }
 
 function safeRenderBlockPatch(

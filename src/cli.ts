@@ -3,14 +3,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { computeDigest, computeDigestFor, digestCommit } from "./digest";
 import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
-import { renderIdentity, renderIdentitySummary, renderOps } from "./ops";
+import { renderContent } from "./content";
+import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
 
 type Format = "json" | "jsonl" | "blockpatch";
 
 interface CliOptions {
-  command: "digest" | "content" | "identity" | "identity-summary" | "verify" | "help";
+  command: "digest" | "content" | "identity" | "identity-from" | "identity-to" | "verify" | "help";
   commit: string;
   cwd?: string;
   format?: Format;
@@ -31,7 +32,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (options.command === "content") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-    process.stdout.write(renderOps(digest));
+    process.stdout.write(renderContent(digest));
     return 0;
   }
   if (options.command === "identity") {
@@ -39,12 +40,16 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(renderIdentity(digest));
     return 0;
   }
-  if (options.command === "identity-summary") {
+  if (options.command === "identity-from") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-    process.stdout.write(renderIdentitySummary(digest));
+    process.stdout.write(renderIdentityFrom(digest));
     return 0;
   }
-
+  if (options.command === "identity-to") {
+    const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+    process.stdout.write(renderIdentityTo(digest));
+    return 0;
+  }
   if (options.command === "digest" && options.range !== undefined) {
     return runDigestRange(options);
   }
@@ -82,7 +87,7 @@ function runDigestBlockpatch(options: CliOptions): number {
     .map((blockpatch) => blockpatch.patch)
     .join("\n");
   process.stdout.write(rendered);
-  const unsupported = digest.summary.unsupported_blockpatches;
+  const unsupported = unsupportedBlocks.length;
   if (unsupported > 0) {
     process.stderr.write(
       `warning: ${unsupported} of ${digest.summary.blocks} blocks are not representable as blockpatch and were omitted; use --format json for the full digest\n`
@@ -186,7 +191,14 @@ function parseArgs(argv: string[]): CliOptions {
     return { command: "help", commit: "HEAD", format: "json", pretty: false, strict: false };
   }
 
-  if (first !== "digest" && first !== "content" && first !== "identity" && first !== "identity-summary" && first !== "verify") {
+  if (
+    first !== "digest" &&
+    first !== "content" &&
+    first !== "identity" &&
+    first !== "identity-from" &&
+    first !== "identity-to" &&
+    first !== "verify"
+  ) {
     throw new Error(`unknown command: ${first}`);
   }
 
@@ -245,10 +257,10 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.range !== undefined && sawCommit) {
     throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
-  if ((options.command === "content" || options.command === "identity" || options.command === "identity-summary") && options.range !== undefined) {
+  if (isViewCommand(options.command) && options.range !== undefined) {
     throw new Error(`${options.command} does not support --range`);
   }
-  if ((options.command === "content" || options.command === "identity" || options.command === "identity-summary") && options.format !== undefined) {
+  if (isViewCommand(options.command) && options.format !== undefined) {
     throw new Error(`${options.command} does not support --format`);
   }
   if (options.strict && (options.command !== "digest" || options.format !== "blockpatch")) {
@@ -269,6 +281,13 @@ function requireValue(args: string[], flag: string): string {
   return value;
 }
 
+function isViewCommand(command: CliOptions["command"]): boolean {
+  return command === "content" ||
+    command === "identity" ||
+    command === "identity-from" ||
+    command === "identity-to";
+}
+
 function parseFormat(value: string): Format {
   if (value === "json" || value === "jsonl" || value === "blockpatch") {
     return value;
@@ -283,7 +302,8 @@ Usage:
   blockcommit digest [commit] [--cwd <repo>] [--pretty]
   blockcommit content [commit] [--cwd <repo>]
   blockcommit identity [commit] [--cwd <repo>]
-  blockcommit identity-summary [commit] [--cwd <repo>]
+  blockcommit identity-from [commit] [--cwd <repo>]
+  blockcommit identity-to [commit] [--cwd <repo>]
   blockcommit digest [commit] --format blockpatch [--strict]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
@@ -295,8 +315,10 @@ Commands:
   digest    emit the canonical JSON line-move digest for a commit
   content   emit compact content operations: moved, inserted, and deleted blocks
   identity  emit pairwise file-identity flow between paths
-  identity-summary
-            emit identity flow with source/destination percentages
+  identity-from
+            emit where old file content moved
+  identity-to
+            emit where new file content came from
   verify    rebuild each changed file from parent + digest blocks and
             byte-compare against the commit; --range walks a rev-list
             (merges skipped) and verifies every commit in it. Passing

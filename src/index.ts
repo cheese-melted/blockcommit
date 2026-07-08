@@ -1,13 +1,18 @@
 export { digestCommit, type DigestOptions } from "./digest";
-export { identityFlows, renderIdentity, renderIdentitySummary, renderOps, type IdentityFlow } from "./ops";
+export { renderContent } from "./content";
+export {
+  identityFlows,
+  renderIdentity,
+  renderIdentityFrom,
+  renderIdentityTo,
+  type IdentityFlow
+} from "./identity-view";
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
 export { digestAlgorithm, schemaVersion } from "./types";
 export type {
   BlockCommitDigest,
   BlockCommitSummary,
   BlockKind,
-  BlockPatchRendering,
-  BlockPatchStatus,
   ChangedFileDigest,
   FileVerification,
   IdentityConfidence,
@@ -22,7 +27,6 @@ export type {
   LineDigestStatus,
   LineMoveBlock,
   LineSpan,
-  MatchMetadata,
   MoveBlock,
   PayloadEncoding,
   UnsupportedReason,

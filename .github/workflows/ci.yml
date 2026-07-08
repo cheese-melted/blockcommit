@@ -31,8 +31,9 @@ jobs:
           const expected = [
             "digestAlgorithm",
             "digestCommit",
+            "renderContent",
             "renderIdentity",
-            "renderOps",
+            "renderIdentitySummary",
             "schemaVersion",
             "verifyCommit",
             "verifyDigest"

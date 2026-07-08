@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
+import { renderContent } from "../src/content";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
-import { renderIdentity, renderIdentitySummary, renderOps } from "../src/ops";
+import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "../src/identity-view";
 import { verifyCommit, verifyDigest } from "../src/verify";
 
 function git(cwd: string, args: string[]): string {
@@ -132,12 +133,10 @@ describe("digestCommit", () => {
     expect(digest.summary).toMatchObject({
       moves: 0,
       insertions: 1,
-      deletions: 1,
-      rendered_blockpatches: 2
+      deletions: 1
     });
     expect(digest.blocks.map((block) => block.kind).sort()).toEqual(["delete", "insert"]);
-    expect(digest.blocks.every((block) => block.blockpatch.status === "rendered")).toBe(true);
-    expect(digest.blocks.some((block) => "patch" in block.blockpatch)).toBe(false);
+    expect(digest.blocks.some((block) => "blockpatch" in block)).toBe(false);
   });
 
   test("keeps replacement insertions in JSON when their anchors are also deleted", () => {
@@ -151,10 +150,7 @@ describe("digestCommit", () => {
     const digest = digestCommit({ cwd: repo, commit });
     const insert = digest.blocks.find((block) => block.kind === "insert");
     expect(insert?.payload_text).toBe("new\n");
-    expect(insert?.blockpatch).toMatchObject({
-      status: "unsupported",
-      reason: "target anchor is removed by the same commit"
-    });
+    expect(insert).not.toHaveProperty("blockpatch");
   });
 
   test("does not pair coincidental trivial lines as moves", () => {
@@ -194,7 +190,7 @@ describe("digestCommit", () => {
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
-  test("reports ambiguity when moved blocks contain duplicate identical lines", () => {
+  test("keeps duplicate identical lines in one exact moved block", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "old.ts"), "function unique() {\nrepeat();\nrepeat();\n}\n");
     commitAll(repo, "base");
@@ -205,11 +201,11 @@ describe("digestCommit", () => {
 
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.summary.moves).toBe(1);
-    expect(digest.blocks[0].match).toMatchObject({
-      algorithm: "exact-line-sha256-identity-preserving",
-      ambiguous: true,
-      duplicate_removed_candidates: 1,
-      duplicate_added_candidates: 1
+    expect(digest.blocks[0]).toMatchObject({
+      kind: "move",
+      payload_text: "function unique() {\nrepeat();\nrepeat();\n}\n",
+      src: { path: "old.ts", start_line: 1, end_line: 4 },
+      dst: { path: "new.ts", start_line: 1, end_line: 4 }
     });
   });
 
@@ -232,14 +228,7 @@ describe("digestCommit", () => {
       kind: "move",
       payload_lines: 2,
       src: { path: "old.txt", start_line: 1, end_line: 2 },
-      dst: { path: "new.txt", start_line: 1, end_line: 2 },
-      match: {
-        chosen_by: "whole_file_identity",
-        confidence: "ambiguous",
-        ambiguous: true,
-        duplicate_removed_candidates: 1,
-        duplicate_added_candidates: 1
-      }
+      dst: { path: "new.txt", start_line: 1, end_line: 2 }
     });
     expect(digest.identity[0]).toMatchObject({
       kind: "renamed",
@@ -269,12 +258,7 @@ describe("digestCommit", () => {
       kind: "move",
       payload_text: "x=1\ny=2\nz=3\n",
       src: { path: "old.txt", start_line: 1, end_line: 3 },
-      dst: { path: "new.txt", start_line: 1, end_line: 3 },
-      match: {
-        chosen_by: "whole_file_identity",
-        confidence: "exact",
-        ambiguous: false
-      }
+      dst: { path: "new.txt", start_line: 1, end_line: 3 }
     });
     expect(digest.identity[0]).toMatchObject({
       kind: "renamed",
@@ -302,12 +286,7 @@ describe("digestCommit", () => {
     const shortBlock = digest.blocks.find((block) => block.kind === "move" && block.payload_text === "x=1\ny=2\nz=3\n");
     expect(shortBlock).toMatchObject({
       src: { path: "a.txt", start_line: 2, end_line: 4 },
-      dst: { path: "b.txt", start_line: 3, end_line: 5 },
-      match: {
-        chosen_by: "dominant_path_identity",
-        confidence: "strong",
-        ambiguous: false
-      }
+      dst: { path: "b.txt", start_line: 3, end_line: 5 }
     });
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
@@ -408,10 +387,7 @@ describe("digestCommit", () => {
       payload_lines: 1
     });
     expect(insert?.payload_text).toBeUndefined();
-    expect(insert?.blockpatch).toMatchObject({
-      status: "unsupported",
-      reason: "blockpatch rendering requires valid UTF-8 payloads and anchors"
-    });
+    expect(insert).not.toHaveProperty("blockpatch");
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -599,10 +575,11 @@ describe("identity", () => {
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.identity).toEqual([]);
     expect(renderIdentity(digest)).toBe("a.ts:3 -> b.ts:2 (1)\n");
-    expect(renderIdentitySummary(digest)).toBe("flow a.ts -> b.ts src=33.3% dst=50% (1/3 -> 1/2)\n");
+    expect(renderIdentityFrom(digest)).toBe("from a.ts:3 => b.ts 33.3% (1/3), unmoved 66.7% (2/3)\n");
+    expect(renderIdentityTo(digest)).toBe("to b.ts:2 <= a.ts 50% (1/2), new 50% (1/2)\n");
   });
 
-  test("summarizes split and merge identity flow", () => {
+  test("summarizes new-file identity makeup", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "a.ts"), "part one()\npart two()\n");
     writeFileSync(join(repo, "b.ts"), "part three()\npart four()\n");
@@ -613,24 +590,28 @@ describe("identity", () => {
     writeFileSync(join(repo, "c.ts"), "part one()\npart two()\npart three()\npart four()\n");
     const mergeCommit = commitAll(repo, "merge files");
 
-    expect(renderIdentitySummary(digestCommit({ cwd: repo, commit: mergeCommit }))).toBe(
-      "merge a.ts -> c.ts src=100% dst=50% (2/2 -> 2/4)\n" +
-      "merge b.ts -> c.ts src=100% dst=50% (2/2 -> 2/4)\n"
+    const mergeDigest = digestCommit({ cwd: repo, commit: mergeCommit });
+    expect(renderIdentityFrom(mergeDigest)).toBe(
+      "from a.ts:2 => c.ts 100% (2/2)\n" +
+      "from b.ts:2 => c.ts 100% (2/2)\n"
     );
+    expect(renderIdentityTo(mergeDigest)).toBe("to c.ts:4 <= a.ts 50% (2/4), b.ts 50% (2/4)\n");
 
     git(repo, ["rm", "c.ts"]);
     writeFileSync(join(repo, "d.ts"), "part one()\npart two()\n");
     writeFileSync(join(repo, "e.ts"), "part three()\npart four()\n");
     const splitCommit = commitAll(repo, "split file");
 
-    expect(renderIdentitySummary(digestCommit({ cwd: repo, commit: splitCommit }))).toBe(
-      "split c.ts -> d.ts src=50% dst=100% (2/4 -> 2/2)\n" +
-      "split c.ts -> e.ts src=50% dst=100% (2/4 -> 2/2)\n"
+    const splitDigest = digestCommit({ cwd: repo, commit: splitCommit });
+    expect(renderIdentityFrom(splitDigest)).toBe("from c.ts:4 => d.ts 50% (2/4), e.ts 50% (2/4)\n");
+    expect(renderIdentityTo(splitDigest)).toBe(
+      "to d.ts:2 <= c.ts 100% (2/2)\n" +
+      "to e.ts:2 <= c.ts 100% (2/2)\n"
     );
   });
 });
 
-describe("renderOps", () => {
+describe("renderContent", () => {
   test("renders compact content op lines", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "a.ts"), "export function first() {}\nexport function second() {}\nexport function third() {}\n");
@@ -640,7 +621,7 @@ describe("renderOps", () => {
     writeFileSync(join(repo, "a.ts"), "export const replacement = true;\nexport const fresh = 1;\n");
     const commit = commitAll(repo, "cut-paste with name reuse");
 
-    const lines = renderOps(digestCommit({ cwd: repo, commit })).trimEnd().split("\n");
+    const lines = renderContent(digestCommit({ cwd: repo, commit })).trimEnd().split("\n");
     expect(lines).toEqual([
       "M a.ts:1+3 -> b.ts:1+3",
       "+ a.ts:1+2"
@@ -751,9 +732,14 @@ describe("cli", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("old.txt:2 -> new.txt:2 (2)\n");
 
-    const summary = cli(["identity-summary", commit, "--cwd", repo]);
-    expect(summary.status).toBe(0);
-    expect(summary.stdout).toBe("rename old.txt -> new.txt src=100% dst=100% (2/2 -> 2/2)\n");
+    const from = cli(["identity-from", commit, "--cwd", repo]);
+    expect(from.status).toBe(0);
+    expect(from.stdout).toBe("from old.txt:2 => new.txt 100% (2/2)\n");
+
+    const to = cli(["identity-to", commit, "--cwd", repo]);
+    expect(to.status).toBe(0);
+    expect(to.stdout).toBe("to new.txt:2 <= old.txt 100% (2/2)\n");
+
   });
 
   test("prints canonical digest ranges as JSONL", () => {
@@ -856,7 +842,7 @@ describe("cli", () => {
         algorithm: { $ref: "#/$defs/algorithm" }
       }
     });
-    expect(schema.$defs.blockpatch.properties.patch).toBeUndefined();
+    expect(schema.$defs.blockpatch).toBeUndefined();
   });
 });
 

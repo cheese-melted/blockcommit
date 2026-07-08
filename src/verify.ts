@@ -12,7 +12,7 @@ import {
 } from "./types";
 
 export interface VerifyDigestOptions {
-  cwd: string;
+  cwd?: string;
   digest: BlockCommitDigest;
 }
 
@@ -212,12 +212,7 @@ function normalizedBlock(block: LineMoveBlock): unknown {
     payload_lines: block.payload_lines,
     payload_encoding: block.payload_encoding,
     payload_text: block.payload_text,
-    payload_base64: block.payload_base64,
-    match: block.match,
-    blockpatch: {
-      status: block.blockpatch.status,
-      reason: block.blockpatch.reason
-    }
+    payload_base64: block.payload_base64
   };
 }
 

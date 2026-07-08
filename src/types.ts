@@ -13,7 +13,6 @@ export const digestAlgorithm = {
 } as const;
 
 export type BlockKind = "move" | "insert" | "delete";
-export type BlockPatchStatus = "rendered" | "unsupported";
 export type PayloadEncoding = "utf-8" | "base64";
 export type LineDigestStatus = "represented" | "partial" | "unsupported";
 export type UnsupportedReason = "binary" | "mode_only" | "submodule" | "filetype" | "unparsed_diff";
@@ -27,27 +26,6 @@ export interface LineSpan {
   byte_end: number;
 }
 
-export interface BlockPatchRendering {
-  status: BlockPatchStatus;
-  reason?: string;
-}
-
-export interface MatchMetadata {
-  algorithm: "exact-line-sha256-identity-preserving";
-  confidence: "exact" | "strong" | "weak" | "ambiguous";
-  ambiguous: boolean;
-  duplicate_removed_candidates: number;
-  duplicate_added_candidates: number;
-  identity_preserving_score: number;
-  chosen_by:
-    | "unique_anchor"
-    | "whole_file_identity"
-    | "dominant_path_identity"
-    | "exact_block_fallback"
-    | "best_effort_tiebreak"
-    | "unpaired";
-}
-
 export type DigestAlgorithm = typeof digestAlgorithm;
 
 interface BaseLineMoveBlock {
@@ -58,8 +36,6 @@ interface BaseLineMoveBlock {
   payload_encoding: PayloadEncoding;
   payload_text?: string;
   payload_base64?: string;
-  match: MatchMetadata;
-  blockpatch: BlockPatchRendering;
 }
 
 export interface MoveBlock extends BaseLineMoveBlock {
@@ -134,8 +110,6 @@ export interface BlockCommitSummary {
   moves: number;
   insertions: number;
   deletions: number;
-  rendered_blockpatches: number;
-  unsupported_blockpatches: number;
 }
 
 export interface BlockCommitDigest {

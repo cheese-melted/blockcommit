@@ -89,65 +89,6 @@
         }
       }
     },
-    "blockpatch": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status"],
-      "properties": {
-        "status": { "enum": ["rendered", "unsupported"] },
-        "reason": { "type": "string" }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "status": { "const": "rendered" } },
-            "required": ["status"]
-          },
-          "then": { "not": { "required": ["reason"] } }
-        },
-        {
-          "if": {
-            "properties": { "status": { "const": "unsupported" } },
-            "required": ["status"]
-          },
-          "then": { "required": ["reason"] }
-        }
-      ]
-    },
-    "match": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "algorithm",
-        "confidence",
-        "ambiguous",
-        "duplicate_removed_candidates",
-        "duplicate_added_candidates",
-        "identity_preserving_score",
-        "chosen_by"
-      ],
-      "properties": {
-        "algorithm": { "const": "exact-line-sha256-identity-preserving" },
-        "confidence": { "enum": ["exact", "strong", "weak", "ambiguous"] },
-        "ambiguous": { "type": "boolean" },
-        "duplicate_removed_candidates": { "$ref": "#/$defs/nonNegativeInteger" },
-        "duplicate_added_candidates": { "$ref": "#/$defs/nonNegativeInteger" },
-        "identity_preserving_score": {
-          "type": "number",
-          "minimum": 0
-        },
-        "chosen_by": {
-          "enum": [
-            "unique_anchor",
-            "whole_file_identity",
-            "dominant_path_identity",
-            "exact_block_fallback",
-            "best_effort_tiebreak",
-            "unpaired"
-          ]
-        }
-      }
-    },
     "lineMoveBlock": {
       "type": "object",
       "additionalProperties": false,
@@ -159,9 +100,7 @@
         "payload_sha256",
         "payload_bytes",
         "payload_lines",
-        "payload_encoding",
-        "match",
-        "blockpatch"
+        "payload_encoding"
       ],
       "properties": {
         "id": {
@@ -189,9 +128,7 @@
         "payload_base64": {
           "type": "string",
           "contentEncoding": "base64"
-        },
-        "match": { "$ref": "#/$defs/match" },
-        "blockpatch": { "$ref": "#/$defs/blockpatch" }
+        }
       },
       "allOf": [
         {
@@ -393,18 +330,14 @@
         "blocks",
         "moves",
         "insertions",
-        "deletions",
-        "rendered_blockpatches",
-        "unsupported_blockpatches"
+        "deletions"
       ],
       "properties": {
         "files": { "$ref": "#/$defs/nonNegativeInteger" },
         "blocks": { "$ref": "#/$defs/nonNegativeInteger" },
         "moves": { "$ref": "#/$defs/nonNegativeInteger" },
         "insertions": { "$ref": "#/$defs/nonNegativeInteger" },
-        "deletions": { "$ref": "#/$defs/nonNegativeInteger" },
-        "rendered_blockpatches": { "$ref": "#/$defs/nonNegativeInteger" },
-        "unsupported_blockpatches": { "$ref": "#/$defs/nonNegativeInteger" }
+        "deletions": { "$ref": "#/$defs/nonNegativeInteger" }
       }
     }
   }

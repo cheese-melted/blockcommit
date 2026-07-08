@@ -8,7 +8,14 @@ import {
   previousLine,
   type LineRecord
 } from "./lines";
-import { nullPath, type BlockPatchRendering } from "./types";
+import { nullPath } from "./types";
+
+export type BlockPatchStatus = "rendered" | "unsupported";
+
+export interface BlockPatchRendering {
+  status: BlockPatchStatus;
+  reason?: string;
+}
 
 export interface RenderableBlock {
   id: string;
