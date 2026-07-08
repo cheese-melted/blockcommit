@@ -96,10 +96,8 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     const oldBytes = pair.oldBytes ?? Buffer.alloc(0);
     const newBytes = pair.newBytes ?? Buffer.alloc(0);
     const binary = pair.gitBinary || isBinary(oldBytes) || isBinary(newBytes);
-    const oldLines = splitLineRecords(pair.path, oldBytes);
-    const newLines = splitLineRecords(pair.path, newBytes);
-    countLineOccurrences(lineOccurrences.old, oldLines);
-    countLineOccurrences(lineOccurrences.new, newLines);
+    const oldLines = binary ? [] : splitLineRecords(pair.path, oldBytes);
+    const newLines = binary ? [] : splitLineRecords(pair.path, newBytes);
     const status = classifyFile(pair, binary, oldBytes, newBytes);
     const shouldParseLines = status.reason === undefined;
     const parsed = shouldParseLines
@@ -126,6 +124,8 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     });
 
     if (finalStatus.lineDigestStatus === "represented") {
+      countLineOccurrences(lineOccurrences.old, oldLines);
+      countLineOccurrences(lineOccurrences.new, newLines);
       removed.push(...parsed.removed);
       added.push(...parsed.added);
     }

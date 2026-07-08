@@ -152,7 +152,7 @@ For represented files, every changed line of the commit appears in exactly one b
 
 When several exact block candidates compete, the matcher uses internal tie-breaks rather than public per-block metadata: prefer more lines, then more bytes, add a small bonus when the source/destination path pair already has dominant identity evidence, and sort by path/line coordinates as a deterministic final tie-break. That scoring is not part of the canonical digest because it is an implementation detail, not a consumer contract.
 
-When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Mode changes are already captured by `old_mode` and `new_mode`; a mode-only change is unsupported because there are no line blocks to emit, while a mode-plus-content change remains `represented` when the content bytes are fully modeled.
+When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Binary files report `old_lines: 0` and `new_lines: 0` because their blob bytes are not split into logical lines. Mode changes are already captured by `old_mode` and `new_mode`; a mode-only change is unsupported because there are no line blocks to emit, while a mode-plus-content change remains `represented` when the content bytes are fully modeled.
 
 ## Content view
 
@@ -213,7 +213,7 @@ An event is emitted when a strict majority of a file's parent-image lines moved 
 
 ## Binary files, and other edges
 
-- **Binary files** (NUL byte in the first 8000 bytes, or files git itself reports as binary) are not represented as line blocks. The file entry includes modes, object IDs, content hashes when blob bytes are available, and `unsupported_reason: "binary"`.
+- **Binary files** (NUL byte in the first 8000 bytes, or files git itself reports as binary) are not represented as line blocks. The file entry includes modes, object IDs, content hashes when blob bytes are available, `old_lines: 0`, `new_lines: 0`, and `unsupported_reason: "binary"`.
 - **Merge commits** are rejected (`verify --range` skips them); the digest is defined against exactly one parent. Root commits diff against the empty tree.
 - **Submodule pointer changes**, mode-only changes, and file-type changes are represented at file level with unsupported metadata. Mode-plus-content changes keep `line_digest_status: "represented"` when the content bytes are fully modeled. Symlink content changes digest the link target as blob content when the file type itself does not change.
 

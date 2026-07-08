@@ -470,6 +470,8 @@ describe("digestCommit", () => {
     expect(digest.files[0]).toMatchObject({
       path: "blob.bin",
       binary: true,
+      old_lines: 0,
+      new_lines: 0,
       line_digest_status: "unsupported",
       unsupported_reason: "binary",
       old_mode: "100644",
@@ -491,9 +493,15 @@ describe("digestCommit", () => {
 
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.summary.blocks).toBe(0);
-    expect(digest.files.map((file) => [file.path, file.line_digest_status, file.unsupported_reason]).sort()).toEqual([
-      ["new.bin", "unsupported", "binary"],
-      ["old.bin", "unsupported", "binary"]
+    expect(digest.files.map((file) => [
+      file.path,
+      file.line_digest_status,
+      file.unsupported_reason,
+      file.old_lines,
+      file.new_lines
+    ]).sort()).toEqual([
+      ["new.bin", "unsupported", "binary", 0, 0],
+      ["old.bin", "unsupported", "binary", 0, 0]
     ]);
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });

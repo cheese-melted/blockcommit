@@ -254,6 +254,18 @@
             "required": ["line_digest_status"]
           },
           "then": { "required": ["unsupported_reason"] }
+        },
+        {
+          "if": {
+            "properties": { "binary": { "const": true } },
+            "required": ["binary"]
+          },
+          "then": {
+            "properties": {
+              "old_lines": { "const": 0 },
+              "new_lines": { "const": 0 }
+            }
+          }
         }
       ]
     },
