@@ -1,5 +1,5 @@
 export { digestCommit, type DigestOptions } from "./digest";
-export { renderIdentity, renderOps } from "./ops";
+export { identityFlows, renderIdentity, renderIdentitySummary, renderOps, type IdentityFlow } from "./ops";
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
 export { digestAlgorithm, schemaVersion } from "./types";
 export type {

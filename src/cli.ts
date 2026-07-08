@@ -3,14 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { computeDigest, computeDigestFor, digestCommit } from "./digest";
 import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
-import { renderIdentity, renderOps } from "./ops";
+import { renderIdentity, renderIdentitySummary, renderOps } from "./ops";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
 
 type Format = "json" | "jsonl" | "blockpatch";
 
 interface CliOptions {
-  command: "digest" | "content" | "identity" | "verify" | "help";
+  command: "digest" | "content" | "identity" | "identity-summary" | "verify" | "help";
   commit: string;
   cwd?: string;
   format?: Format;
@@ -37,6 +37,11 @@ async function main(argv: string[]): Promise<number> {
   if (options.command === "identity") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
     process.stdout.write(renderIdentity(digest));
+    return 0;
+  }
+  if (options.command === "identity-summary") {
+    const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+    process.stdout.write(renderIdentitySummary(digest));
     return 0;
   }
 
@@ -181,7 +186,7 @@ function parseArgs(argv: string[]): CliOptions {
     return { command: "help", commit: "HEAD", format: "json", pretty: false, strict: false };
   }
 
-  if (first !== "digest" && first !== "content" && first !== "identity" && first !== "verify") {
+  if (first !== "digest" && first !== "content" && first !== "identity" && first !== "identity-summary" && first !== "verify") {
     throw new Error(`unknown command: ${first}`);
   }
 
@@ -240,10 +245,10 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.range !== undefined && sawCommit) {
     throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
-  if ((options.command === "content" || options.command === "identity") && options.range !== undefined) {
+  if ((options.command === "content" || options.command === "identity" || options.command === "identity-summary") && options.range !== undefined) {
     throw new Error(`${options.command} does not support --range`);
   }
-  if ((options.command === "content" || options.command === "identity") && options.format !== undefined) {
+  if ((options.command === "content" || options.command === "identity" || options.command === "identity-summary") && options.format !== undefined) {
     throw new Error(`${options.command} does not support --format`);
   }
   if (options.strict && (options.command !== "digest" || options.format !== "blockpatch")) {
@@ -278,6 +283,7 @@ Usage:
   blockcommit digest [commit] [--cwd <repo>] [--pretty]
   blockcommit content [commit] [--cwd <repo>]
   blockcommit identity [commit] [--cwd <repo>]
+  blockcommit identity-summary [commit] [--cwd <repo>]
   blockcommit digest [commit] --format blockpatch [--strict]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
@@ -289,6 +295,8 @@ Commands:
   digest    emit the canonical JSON line-move digest for a commit
   content   emit compact content operations: moved, inserted, and deleted blocks
   identity  emit pairwise file-identity flow between paths
+  identity-summary
+            emit identity flow with source/destination percentages
   verify    rebuild each changed file from parent + digest blocks and
             byte-compare against the commit; --range walks a rev-list
             (merges skipped) and verifies every commit in it. Passing

@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
-import { renderIdentity, renderOps } from "../src/ops";
+import { renderIdentity, renderIdentitySummary, renderOps } from "../src/ops";
 import { verifyCommit, verifyDigest } from "../src/verify";
 
 function git(cwd: string, args: string[]): string {
@@ -599,6 +599,34 @@ describe("identity", () => {
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.identity).toEqual([]);
     expect(renderIdentity(digest)).toBe("a.ts:3 -> b.ts:2 (1)\n");
+    expect(renderIdentitySummary(digest)).toBe("flow a.ts -> b.ts src=33.3% dst=50% (1/3 -> 1/2)\n");
+  });
+
+  test("summarizes split and merge identity flow", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.ts"), "part one()\npart two()\n");
+    writeFileSync(join(repo, "b.ts"), "part three()\npart four()\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "a.ts"]);
+    git(repo, ["rm", "b.ts"]);
+    writeFileSync(join(repo, "c.ts"), "part one()\npart two()\npart three()\npart four()\n");
+    const mergeCommit = commitAll(repo, "merge files");
+
+    expect(renderIdentitySummary(digestCommit({ cwd: repo, commit: mergeCommit }))).toBe(
+      "merge a.ts -> c.ts src=100% dst=50% (2/2 -> 2/4)\n" +
+      "merge b.ts -> c.ts src=100% dst=50% (2/2 -> 2/4)\n"
+    );
+
+    git(repo, ["rm", "c.ts"]);
+    writeFileSync(join(repo, "d.ts"), "part one()\npart two()\n");
+    writeFileSync(join(repo, "e.ts"), "part three()\npart four()\n");
+    const splitCommit = commitAll(repo, "split file");
+
+    expect(renderIdentitySummary(digestCommit({ cwd: repo, commit: splitCommit }))).toBe(
+      "split c.ts -> d.ts src=50% dst=100% (2/4 -> 2/2)\n" +
+      "split c.ts -> e.ts src=50% dst=100% (2/4 -> 2/2)\n"
+    );
   });
 });
 
@@ -722,6 +750,10 @@ describe("cli", () => {
     const result = cli(["identity", commit, "--cwd", repo]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("old.txt:2 -> new.txt:2 (2)\n");
+
+    const summary = cli(["identity-summary", commit, "--cwd", repo]);
+    expect(summary.status).toBe(0);
+    expect(summary.stdout).toBe("rename old.txt -> new.txt src=100% dst=100% (2/2 -> 2/2)\n");
   });
 
   test("prints canonical digest ranges as JSONL", () => {

@@ -22,7 +22,21 @@ export function renderIdentity(digest: BlockCommitDigest): string {
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-interface IdentityFlow {
+export function renderIdentitySummary(digest: BlockCommitDigest): string {
+  const flows = identityFlows(digest);
+  const outgoing = countBy(flows, (flow) => flow.srcPath);
+  const incoming = countBy(flows, (flow) => flow.dstPath);
+  const filesByPath = new Map(digest.files.map((file) => [file.path, file]));
+  const lines = flows.map((flow) => {
+    const srcPct = flow.movedLines / flow.srcLines;
+    const dstPct = flow.movedLines / flow.dstLines;
+    const label = identitySummaryLabel(flow, filesByPath, outgoing, incoming);
+    return `${label} ${quotePath(flow.srcPath)} -> ${quotePath(flow.dstPath)} src=${formatPercent(srcPct)} dst=${formatPercent(dstPct)} (${flow.movedLines}/${flow.srcLines} -> ${flow.movedLines}/${flow.dstLines})`;
+  });
+  return lines.length === 0 ? "" : lines.join("\n") + "\n";
+}
+
+export interface IdentityFlow {
   srcPath: string;
   dstPath: string;
   srcLines: number;
@@ -40,7 +54,7 @@ function renderBlockOp(block: LineMoveBlock): string {
   return `M ${spanRef(block.src)} -> ${spanRef(block.dst)}`;
 }
 
-function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
+export function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
   const filesByPath = new Map(digest.files.map((file) => [file.path, file]));
   const flows = new Map<string, IdentityFlow>();
 
@@ -67,6 +81,44 @@ function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
     left.srcPath.localeCompare(right.srcPath) ||
     left.dstPath.localeCompare(right.dstPath)
   );
+}
+
+function identitySummaryLabel(
+  flow: IdentityFlow,
+  filesByPath: Map<string, BlockCommitDigest["files"][number]>,
+  outgoing: Map<string, number>,
+  incoming: Map<string, number>
+): string {
+  const srcComplete = flow.movedLines === flow.srcLines;
+  const dstComplete = flow.movedLines === flow.dstLines;
+  if ((outgoing.get(flow.srcPath) ?? 0) > 1) {
+    return (incoming.get(flow.dstPath) ?? 0) > 1 ? "split+merge" : "split";
+  }
+  if ((incoming.get(flow.dstPath) ?? 0) > 1) {
+    return "merge";
+  }
+  if (srcComplete && dstComplete) {
+    return filesByPath.get(flow.srcPath)?.new_exists === true ? "reuse" : "rename";
+  }
+  return "flow";
+}
+
+function countBy<T>(values: T[], keyFor: (value: T) => string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const key = keyFor(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function formatPercent(value: number): string {
+  const percent = value * 100;
+  const rounded = Math.round(percent * 10) / 10;
+  if (value > 0 && rounded === 0) {
+    return "<0.1%";
+  }
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
 function spanRef(span: LineSpan | null): string {
