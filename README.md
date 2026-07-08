@@ -46,6 +46,8 @@ blockcommit content HEAD                    # compact content-op view
 blockcommit identity HEAD                   # pairwise file-identity flow
 blockcommit identity-from HEAD              # where old file content moved
 blockcommit identity-to HEAD                # where new file content came from
+blockcommit identity-from HEAD --pretty     # aligned where-DNA-moved view
+blockcommit identity-to HEAD --pretty       # aligned where-DNA-came-from view
 blockcommit digest --range v1.0..main --format jsonl
 blockcommit verify HEAD                     # round-trip check one commit
 blockcommit verify HEAD --format json
@@ -56,7 +58,7 @@ blockcommit verify --range v1.0..main       # round-trip check a whole range
 
 `digest [commit] [--cwd <repo>] [--pretty]` prints the canonical JSON digest: the full source of truth for tools, storage, and verification. It includes commit metadata, algorithm/schema metadata, changed file facts, content blocks with spans and payload metadata, derived identity events, and summary counts.
 
-`content [commit] [--cwd <repo>]`, `identity [commit] [--cwd <repo>]`, `identity-from [commit] [--cwd <repo>]`, and `identity-to [commit] [--cwd <repo>]` are readable views over that digest. `content` prints the block-operation layer. `identity` prints the raw pairwise path-flow layer. `identity-from` groups by old file, and `identity-to` groups by new file.
+`content [commit] [--cwd <repo>]`, `identity [commit] [--cwd <repo>]`, `identity-from [commit] [--cwd <repo>] [--pretty]`, and `identity-to [commit] [--cwd <repo>] [--pretty]` are readable views over that digest. `content` prints the block-operation layer. `identity` prints the raw pairwise path-flow layer. `identity-from` groups by old file, and `identity-to` groups by new file.
 
 `digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line.
 
@@ -187,29 +189,31 @@ The text view is derived from all cross-path `M` blocks. It does not label event
 `identity-from` and `identity-to` group raw identity flow in opposite directions. `identity-from` answers where each old file's moved lines ended up. `identity-to` answers where each new file's moved lines came from.
 
 ```text
-from old.ts:10 => new.ts 100% (10/10)
-from a.ts:10 => b.ts 60% (6/10), unmoved 40% (4/10)
-to new.ts:10 <= old.ts 100% (10/10)
-to b.ts:20 <= a.ts 30% (6/20), new 70% (14/20)
-to app.ts:20 <= model.ts 25% (5/20), view.ts 15% (3/20), new 60% (12/20)
+from old.ts:10 => new.ts (10/10, 100%)
+from a.ts:10 => b.ts (6/10, 60%), unmoved (4/10, 40%)
+to new.ts:10 <= old.ts (10/10, 100%)
+to b.ts:20 <= a.ts (6/20, 30%), new (14/20, 70%)
+to app.ts:20 <= model.ts (5/20, 25%), view.ts (3/20, 15%), new (12/20, 60%)
 ```
 
 The number after a `from` path is the old file's line count; each destination entry is the share of that old file that moved there. `unmoved` is old content that did not move to another path. The number after a `to` path is the new file's line count; each source entry is the share of that new file that came from that source. `new` is destination content that was not moved from another path.
 
-The motivating case: cut-paste a whole file to a new name, then create *different* content under the old name. Line moves make this visible; the identity layer makes it explicit:
+Add `--pretty` to split each grouped view into aligned rows. For `identity-from`, this emphasizes where each old file's DNA moved:
 
-```jsonc
-{
-  "kind": "path_reused",               // or "renamed" when the old path vacated
-  "old_identity": { "path": "a.ts", "lines": 6, "sha256": "2be6…" },
-  "moved_to":     { "path": "b.ts", "lines_moved": 6, "blocks": ["bc_0123456789abcdef"] },
-  "new_identity": { "path": "a.ts", "lines": 2, "sha256": "bd9f…" },  // null for renamed
-  "confidence": "exact",               // or "partial"
-  "coverage": { "old_file_lines_moved": 1, "new_file_lines_from_old": 1 }
-}
+```text
+a.ts:10  =>  b.ts     (6/10, 60%)
+            unmoved  (4/10, 40%)
 ```
 
-An event is emitted when a strict majority of a file's parent-image lines moved to a single other path. `confidence` is `"exact"` only when *all* old lines moved there and *all* of the destination's post-image lines came from them; anything looser is `"partial"` with floored coverage ratios. For a whole-file move, `old_identity.sha256` equals the move block's `payload_sha256`, tying the layers together. Splits across several destinations and merges below majority are intentionally not named yet — the blocks still carry the raw signal.
+For `identity-to`, the same layout emphasizes each new file's DNA makeup, including the `new` lines that did not move from another path:
+
+```text
+app.ts:20  <=  model.ts  (5/20, 25%)
+             view.ts   (3/20, 15%)
+             new       (12/20, 60%)
+```
+
+The canonical JSON still includes derived identity events for exact or majority path continuity, such as a whole-file rename or path reuse. The text views intentionally avoid naming those cases; the counts are the more useful surface for reading where file DNA moved.
 
 ## Binary files, and other edges
 

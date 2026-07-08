@@ -600,8 +600,16 @@ describe("identity", () => {
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.identity).toEqual([]);
     expect(renderIdentity(digest)).toBe("a.ts:3 -> b.ts:2 (1)\n");
-    expect(renderIdentityFrom(digest)).toBe("from a.ts:3 => b.ts 33.3% (1/3), unmoved 66.7% (2/3)\n");
-    expect(renderIdentityTo(digest)).toBe("to b.ts:2 <= a.ts 50% (1/2), new 50% (1/2)\n");
+    expect(renderIdentityFrom(digest)).toBe("from a.ts:3 => b.ts (1/3, 33.3%), unmoved (2/3, 66.7%)\n");
+    expect(renderIdentityFrom(digest, { pretty: true })).toBe(
+      "  a.ts:3  =>  b.ts     (1/3, 33.3%)\n" +
+      "              unmoved  (2/3, 66.7%)\n"
+    );
+    expect(renderIdentityTo(digest)).toBe("to b.ts:2 <= a.ts (1/2, 50%), new (1/2, 50%)\n");
+    expect(renderIdentityTo(digest, { pretty: true })).toBe(
+      "  b.ts:2  <=  a.ts  (1/2, 50%)\n" +
+      "              new   (1/2, 50%)\n"
+    );
   });
 
   test("summarizes new-file identity makeup", () => {
@@ -617,10 +625,10 @@ describe("identity", () => {
 
     const mergeDigest = digestCommit({ cwd: repo, commit: mergeCommit });
     expect(renderIdentityFrom(mergeDigest)).toBe(
-      "from a.ts:2 => c.ts 100% (2/2)\n" +
-      "from b.ts:2 => c.ts 100% (2/2)\n"
+      "from a.ts:2 => c.ts (2/2, 100%)\n" +
+      "from b.ts:2 => c.ts (2/2, 100%)\n"
     );
-    expect(renderIdentityTo(mergeDigest)).toBe("to c.ts:4 <= a.ts 50% (2/4), b.ts 50% (2/4)\n");
+    expect(renderIdentityTo(mergeDigest)).toBe("to c.ts:4 <= a.ts (2/4, 50%), b.ts (2/4, 50%)\n");
 
     git(repo, ["rm", "c.ts"]);
     writeFileSync(join(repo, "d.ts"), "part one()\npart two()\n");
@@ -628,10 +636,10 @@ describe("identity", () => {
     const splitCommit = commitAll(repo, "split file");
 
     const splitDigest = digestCommit({ cwd: repo, commit: splitCommit });
-    expect(renderIdentityFrom(splitDigest)).toBe("from c.ts:4 => d.ts 50% (2/4), e.ts 50% (2/4)\n");
+    expect(renderIdentityFrom(splitDigest)).toBe("from c.ts:4 => d.ts (2/4, 50%), e.ts (2/4, 50%)\n");
     expect(renderIdentityTo(splitDigest)).toBe(
-      "to d.ts:2 <= c.ts 100% (2/2)\n" +
-      "to e.ts:2 <= c.ts 100% (2/2)\n"
+      "to d.ts:2 <= c.ts (2/2, 100%)\n" +
+      "to e.ts:2 <= c.ts (2/2, 100%)\n"
     );
   });
 });
@@ -745,11 +753,19 @@ describe("cli", () => {
 
     const from = cli(["identity-from", commit, "--cwd", repo]);
     expect(from.status).toBe(0);
-    expect(from.stdout).toBe("from old.txt:2 => new.txt 100% (2/2)\n");
+    expect(from.stdout).toBe("from old.txt:2 => new.txt (2/2, 100%)\n");
+
+    const prettyFrom = cli(["identity-from", commit, "--cwd", repo, "--pretty"]);
+    expect(prettyFrom.status).toBe(0);
+    expect(prettyFrom.stdout).toBe("  old.txt:2  =>  new.txt  (2/2, 100%)\n");
 
     const to = cli(["identity-to", commit, "--cwd", repo]);
     expect(to.status).toBe(0);
-    expect(to.stdout).toBe("to new.txt:2 <= old.txt 100% (2/2)\n");
+    expect(to.stdout).toBe("to new.txt:2 <= old.txt (2/2, 100%)\n");
+
+    const prettyTo = cli(["identity-to", commit, "--cwd", repo, "--pretty"]);
+    expect(prettyTo.status).toBe(0);
+    expect(prettyTo.stdout).toBe("  new.txt:2  <=  old.txt  (2/2, 100%)\n");
 
   });
 

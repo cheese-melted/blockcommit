@@ -41,12 +41,12 @@ async function main(argv: string[]): Promise<number> {
   }
   if (options.command === "identity-from") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-    process.stdout.write(renderIdentityFrom(digest));
+    process.stdout.write(renderIdentityFrom(digest, { pretty: options.pretty }));
     return 0;
   }
   if (options.command === "identity-to") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-    process.stdout.write(renderIdentityTo(digest));
+    process.stdout.write(renderIdentityTo(digest, { pretty: options.pretty }));
     return 0;
   }
   if (options.command === "digest" && options.range !== undefined) {
@@ -228,7 +228,7 @@ function parseArgs(argv: string[]): CliOptions {
   if (isViewCommand(options.command) && options.format !== undefined) {
     throw new Error(`${options.command} does not support --format`);
   }
-  if (isViewCommand(options.command) && options.pretty) {
+  if ((options.command === "content" || options.command === "identity") && options.pretty) {
     throw new Error(`${options.command} does not support --pretty`);
   }
   if (options.command === "digest" && options.range !== undefined && options.pretty) {
@@ -276,8 +276,8 @@ Usage:
   blockcommit digest [commit] [--cwd <repo>] [--pretty]
   blockcommit content [commit] [--cwd <repo>]
   blockcommit identity [commit] [--cwd <repo>]
-  blockcommit identity-from [commit] [--cwd <repo>]
-  blockcommit identity-to [commit] [--cwd <repo>]
+  blockcommit identity-from [commit] [--cwd <repo>] [--pretty]
+  blockcommit identity-to [commit] [--cwd <repo>] [--pretty]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
   blockcommit verify digest.json --cwd <repo>

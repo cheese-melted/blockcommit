@@ -5,7 +5,8 @@ export {
   renderIdentity,
   renderIdentityFrom,
   renderIdentityTo,
-  type IdentityFlow
+  type IdentityFlow,
+  type IdentityRenderOptions
 } from "./identity-view";
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
 export { digestAlgorithm, schemaVersion } from "./types";
