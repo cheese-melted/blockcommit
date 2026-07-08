@@ -4,9 +4,10 @@
   "title": "blockcommit digest v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "commit", "parent", "repo", "files", "blocks", "identity", "summary"],
+  "required": ["schema_version", "algorithm", "commit", "parent", "files", "blocks", "identity", "summary"],
   "properties": {
     "schema_version": { "const": "blockcommit.digest.v1" },
+    "algorithm": { "$ref": "#/$defs/algorithm" },
     "commit": { "$ref": "#/$defs/gitOid" },
     "parent": {
       "anyOf": [
@@ -14,7 +15,6 @@
         { "type": "null" }
       ]
     },
-    "repo": { "type": "string" },
     "files": {
       "type": "array",
       "items": { "$ref": "#/$defs/changedFile" }
@@ -66,6 +66,26 @@
         "line_count": { "$ref": "#/$defs/positiveInteger" },
         "byte_start": { "$ref": "#/$defs/nonNegativeInteger" },
         "byte_end": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "algorithm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "anchor_min_alnum", "exact_block_fallback", "git_diff"],
+      "properties": {
+        "name": { "const": "exact-line-sha256-patience" },
+        "version": { "const": 1 },
+        "anchor_min_alnum": { "const": 4 },
+        "exact_block_fallback": { "const": true },
+        "git_diff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "indent_heuristic"],
+          "properties": {
+            "algorithm": { "const": "myers" },
+            "indent_heuristic": { "const": false }
+          }
+        }
       }
     },
     "blockpatch": {
@@ -154,16 +174,45 @@
         "match": { "$ref": "#/$defs/match" },
         "blockpatch": { "$ref": "#/$defs/blockpatch" }
       },
-      "oneOf": [
+      "allOf": [
         {
-          "properties": { "payload_encoding": { "const": "utf-8" } },
-          "required": ["payload_text"],
-          "not": { "required": ["payload_base64"] }
+          "oneOf": [
+            {
+              "properties": { "payload_encoding": { "const": "utf-8" } },
+              "required": ["payload_text"],
+              "not": { "required": ["payload_base64"] }
+            },
+            {
+              "properties": { "payload_encoding": { "const": "base64" } },
+              "required": ["payload_base64"],
+              "not": { "required": ["payload_text"] }
+            }
+          ]
         },
         {
-          "properties": { "payload_encoding": { "const": "base64" } },
-          "required": ["payload_base64"],
-          "not": { "required": ["payload_text"] }
+          "oneOf": [
+            {
+              "properties": {
+                "kind": { "const": "move" },
+                "src": { "$ref": "#/$defs/lineSpan" },
+                "dst": { "$ref": "#/$defs/lineSpan" }
+              }
+            },
+            {
+              "properties": {
+                "kind": { "const": "insert" },
+                "src": { "type": "null" },
+                "dst": { "$ref": "#/$defs/lineSpan" }
+              }
+            },
+            {
+              "properties": {
+                "kind": { "const": "delete" },
+                "src": { "$ref": "#/$defs/lineSpan" },
+                "dst": { "type": "null" }
+              }
+            }
+          ]
         }
       ]
     },

@@ -11,6 +11,7 @@ import {
   type LineRecord
 } from "./lines";
 import {
+  digestAlgorithm,
   schemaVersion,
   type BlockKind,
   type BlockCommitDigest,
@@ -165,9 +166,9 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
 
   const digest: BlockCommitDigest = {
     schema_version: schemaVersion,
+    algorithm: digestAlgorithm,
     commit: info.commit,
     parent: info.parent,
-    repo: info.repo,
     files: fileDigests,
     blocks,
     identity: deriveIdentity(fileDigests, blocks),
@@ -365,7 +366,7 @@ function pairLines(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
   return paired;
 }
 
-const anchorMinAlnum = 4;
+const anchorMinAlnum = digestAlgorithm.anchor_min_alnum;
 const nonAsciiAlnum = /[\p{L}\p{N}]/u;
 
 // Memoized on the record: pairLines re-anchors until it reaches a fixed
@@ -669,21 +670,24 @@ function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
     targetInsertBeforeLine: draft.targetInsertBeforeLine
   }, context);
   const encoded = encodePayload(payload);
+  const base = {
+    id,
+    payload_sha256: hash,
+    payload_bytes: payload.length,
+    payload_lines: srcLines?.length ?? dstLines?.length ?? 0,
+    payload_encoding: encoded.encoding,
+    ...encoded.fields,
+    match: blockMatchMetadata(draft),
+    blockpatch: canonicalBlockpatch(renderedBlockpatch)
+  };
+  const block: LineMoveBlock = kind === "move"
+    ? { ...base, kind, src: src!, dst: dst! }
+    : kind === "insert"
+      ? { ...base, kind, src: null, dst: dst! }
+      : { ...base, kind, src: src!, dst: null };
 
   return {
-    block: {
-      id,
-      kind,
-      src,
-      dst,
-      payload_sha256: hash,
-      payload_bytes: payload.length,
-      payload_lines: srcLines?.length ?? dstLines?.length ?? 0,
-      payload_encoding: encoded.encoding,
-      ...encoded.fields,
-      match: blockMatchMetadata(draft),
-      blockpatch: canonicalBlockpatch(renderedBlockpatch)
-    },
+    block,
     blockpatch: { id, ...renderedBlockpatch }
   };
 }

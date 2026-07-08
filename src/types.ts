@@ -1,5 +1,15 @@
 export const nullPath = "/dev/null";
 export const schemaVersion = "blockcommit.digest.v1";
+export const digestAlgorithm = {
+  name: "exact-line-sha256-patience",
+  version: 1,
+  anchor_min_alnum: 4,
+  exact_block_fallback: true,
+  git_diff: {
+    algorithm: "myers",
+    indent_heuristic: false
+  }
+} as const;
 
 export type BlockKind = "move" | "insert" | "delete";
 export type BlockPatchStatus = "rendered" | "unsupported";
@@ -28,11 +38,10 @@ export interface MatchMetadata {
   duplicate_added_candidates: number;
 }
 
-export interface LineMoveBlock {
+export type DigestAlgorithm = typeof digestAlgorithm;
+
+interface BaseLineMoveBlock {
   id: string;
-  kind: BlockKind;
-  src: LineSpan | null;
-  dst: LineSpan | null;
   payload_sha256: string;
   payload_bytes: number;
   payload_lines: number;
@@ -42,6 +51,26 @@ export interface LineMoveBlock {
   match: MatchMetadata;
   blockpatch: BlockPatchRendering;
 }
+
+export interface MoveBlock extends BaseLineMoveBlock {
+  kind: "move";
+  src: LineSpan;
+  dst: LineSpan;
+}
+
+export interface InsertBlock extends BaseLineMoveBlock {
+  kind: "insert";
+  src: null;
+  dst: LineSpan;
+}
+
+export interface DeleteBlock extends BaseLineMoveBlock {
+  kind: "delete";
+  src: LineSpan;
+  dst: null;
+}
+
+export type LineMoveBlock = MoveBlock | InsertBlock | DeleteBlock;
 
 export interface ChangedFileDigest {
   path: string;
@@ -101,9 +130,9 @@ export interface BlockCommitSummary {
 
 export interface BlockCommitDigest {
   schema_version: typeof schemaVersion;
+  algorithm: DigestAlgorithm;
   commit: string;
   parent: string | null;
-  repo: string;
   files: ChangedFileDigest[];
   blocks: LineMoveBlock[];
   identity: IdentityEvent[];

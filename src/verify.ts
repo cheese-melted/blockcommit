@@ -12,7 +12,7 @@ import {
 } from "./types";
 
 export interface VerifyDigestOptions {
-  cwd?: string;
+  cwd: string;
   digest: BlockCommitDigest;
 }
 
@@ -71,7 +71,20 @@ export function verifyDigest(options: VerifyDigestOptions): VerifyResult {
     checks.push(verifyPayloadMetadata(block));
   }
 
-  const cwd = options.cwd ?? supplied.repo;
+  if (options.cwd === undefined) {
+    checks.push({
+      path: "<digest>",
+      ok: false,
+      reason: "cwd is required to verify a saved digest"
+    });
+    return {
+      commit: supplied.commit,
+      ok: false,
+      files: checks
+    };
+  }
+
+  const cwd = options.cwd;
   const recomputed = computeDigest({ cwd, commit: supplied.commit }).digest;
   checks.push(...compareDigestFacts(supplied, recomputed));
 
@@ -119,6 +132,7 @@ function compareDigestFacts(supplied: BlockCommitDigest, recomputed: BlockCommit
   const checks: FileVerification[] = [];
   checks.push(compareValue("<digest>", "commit", supplied.commit, recomputed.commit));
   checks.push(compareValue("<digest>", "parent", supplied.parent, recomputed.parent));
+  checks.push(compareValue("<digest>", "algorithm", supplied.algorithm, recomputed.algorithm));
   checks.push(compareValue("<digest>", "summary", supplied.summary, recomputed.summary));
   checks.push(compareValue("<digest>", "identity", supplied.identity, recomputed.identity));
   checks.push(...compareFiles(supplied.files, recomputed.files));

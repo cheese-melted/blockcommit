@@ -1,7 +1,7 @@
 export { digestCommit, type DigestOptions } from "./digest";
-export { renderOps } from "./ops";
+export { renderIdentity, renderOps } from "./ops";
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
-export { schemaVersion } from "./types";
+export { digestAlgorithm, schemaVersion } from "./types";
 export type {
   BlockCommitDigest,
   BlockCommitSummary,
@@ -16,10 +16,14 @@ export type {
   IdentityEvent,
   IdentityKind,
   IdentityMove,
+  DeleteBlock,
+  DigestAlgorithm,
+  InsertBlock,
   LineDigestStatus,
   LineMoveBlock,
   LineSpan,
   MatchMetadata,
+  MoveBlock,
   PayloadEncoding,
   UnsupportedReason,
   VerifyResult

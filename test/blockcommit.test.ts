@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
-import { renderOps } from "../src/ops";
+import { renderIdentity, renderOps } from "../src/ops";
 import { verifyCommit, verifyDigest } from "../src/verify";
 
 function git(cwd: string, args: string[]): string {
@@ -51,6 +51,17 @@ describe("digestCommit", () => {
 
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.schema_version).toBe("blockcommit.digest.v1");
+    expect(JSON.parse(JSON.stringify(digest))).not.toHaveProperty("repo");
+    expect(digest.algorithm).toEqual({
+      name: "exact-line-sha256-patience",
+      version: 1,
+      anchor_min_alnum: 4,
+      exact_block_fallback: true,
+      git_diff: {
+        algorithm: "myers",
+        indent_heuristic: false
+      }
+    });
     expect(digest.summary).toMatchObject({
       blocks: 3,
       moves: 1,
@@ -67,6 +78,21 @@ describe("digestCommit", () => {
     expect(move?.payload_encoding).toBe("utf-8");
     expect(move?.payload_text).toBe("move\n");
     expect(move?.payload_base64).toBeUndefined();
+  });
+
+  test("canonical digests do not depend on checkout path", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "base\n");
+    commitAll(repo, "base");
+    writeFileSync(join(repo, "file.txt"), "base\nnext\n");
+    const commit = commitAll(repo, "add line");
+
+    const clone = mkdtempSync(join(tmpdir(), "blockcommit-clone-"));
+    git(tmpdir(), ["clone", repo, clone]);
+
+    expect(JSON.stringify(digestCommit({ cwd: repo, commit }))).toBe(
+      JSON.stringify(digestCommit({ cwd: clone, commit }))
+    );
   });
 
   test("groups a delete/add rename into one moved block", () => {
@@ -490,6 +516,7 @@ describe("identity", () => {
       confidence: "partial",
       coverage: { old_file_lines_moved: 0.75, new_file_lines_from_old: 1 }
     });
+    expect(renderIdentity(digest)).toBe("");
   });
 
   test("emits no identity event for in-file reordering or minority moves", () => {
@@ -507,7 +534,7 @@ describe("identity", () => {
 });
 
 describe("renderOps", () => {
-  test("renders blocks and identity events as compact op lines", () => {
+  test("renders compact content op lines", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "a.ts"), "export function first() {}\nexport function second() {}\nexport function third() {}\n");
     commitAll(repo, "base");
@@ -517,10 +544,22 @@ describe("renderOps", () => {
     const commit = commitAll(repo, "cut-paste with name reuse");
 
     const lines = renderOps(digestCommit({ cwd: repo, commit })).trimEnd().split("\n");
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatch(/^M a\.ts:1\+3 -> b\.ts:1\+3 sha=[0-9a-f]{12}$/);
-    expect(lines[1]).toMatch(/^I \/dev\/null -> a\.ts:1\+2 sha=[0-9a-f]{12}$/);
-    expect(lines[2]).toBe("identity path_reused a.ts -> b.ts moved=3/3 new_lines=2 exact");
+    expect(lines).toEqual([
+      "M a.ts:1+3 -> b.ts:1+3",
+      "+ a.ts:1+2"
+    ]);
+  });
+
+  test("renders exact identity events as tight summaries", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.ts"), "export function first() {}\nexport function second() {}\nexport function third() {}\n");
+    commitAll(repo, "base");
+
+    writeFileSync(join(repo, "b.ts"), "export function first() {}\nexport function second() {}\nexport function third() {}\n");
+    writeFileSync(join(repo, "a.ts"), "export const replacement = true;\nexport const fresh = 1;\n");
+    const commit = commitAll(repo, "cut-paste with name reuse");
+
+    expect(renderIdentity(digestCommit({ cwd: repo, commit }))).toBe("reuse a.ts -> b.ts\n");
   });
 });
 
@@ -599,7 +638,21 @@ describe("cli", () => {
 
     const result = cli(["digest", commit, "--cwd", repo, "--format", "ops"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/^I \/dev\/null -> file\.txt:2\+1 sha=[0-9a-f]{12}$/m);
+    expect(result.stdout).toMatch(/^\+ file\.txt:2\+1$/m);
+  });
+
+  test("prints exact identity summaries", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "old.txt"), "alpha\nbeta\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "old.txt"]);
+    writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
+    const commit = commitAll(repo, "rename without git mv");
+
+    const result = cli(["digest", commit, "--cwd", repo, "--format", "identity"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("rename old.txt -> new.txt\n");
   });
 
   test("prints canonical digest ranges as JSONL", () => {
@@ -641,6 +694,10 @@ describe("cli", () => {
     const digest = digestCommit({ cwd: repo, commit });
     const digestPath = join(repo, "digest.json");
     writeFileSync(digestPath, JSON.stringify(digest, null, 2));
+
+    const missingCwd = cli(["verify", digestPath]);
+    expect(missingCwd.status).toBe(1);
+    expect(missingCwd.stdout).toContain("cwd is required to verify a saved digest");
 
     const ok = cli(["verify", digestPath, "--cwd", repo]);
     expect(ok.status).toBe(0);
@@ -694,7 +751,8 @@ describe("cli", () => {
     expect(schema).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       properties: {
-        schema_version: { const: "blockcommit.digest.v1" }
+        schema_version: { const: "blockcommit.digest.v1" },
+        algorithm: { $ref: "#/$defs/algorithm" }
       }
     });
     expect(schema.$defs.blockpatch.properties.patch).toBeUndefined();
@@ -732,9 +790,22 @@ describe("digest schema", () => {
     // Guard that the fixtures still exercise the schema's conditional shapes.
     const [rootDigest, movesDigest, modeOnlyDigest] = digests;
     expect(rootDigest.parent).toBeNull();
+    expect(rootDigest).not.toHaveProperty("repo");
+    expect(rootDigest.algorithm).toMatchObject({
+      name: "exact-line-sha256-patience",
+      version: 1,
+      anchor_min_alnum: 4,
+      exact_block_fallback: true
+    });
     expect(movesDigest.blocks.some((block) => block.payload_encoding === "base64")).toBe(true);
     expect(movesDigest.files.some((file) => file.unsupported_reason === "binary")).toBe(true);
     expect(movesDigest.identity.length).toBeGreaterThan(0);
     expect(modeOnlyDigest.files.some((file) => file.unsupported_reason === "mode_only")).toBe(true);
+
+    const invalidInsert = JSON.parse(JSON.stringify(movesDigest));
+    const moveBlock = invalidInsert.blocks.find((block: { kind: string }) => block.kind === "move");
+    moveBlock.kind = "insert";
+    expect(validate(invalidInsert)).toBe(false);
+    expect(validate.errors ?? []).not.toEqual([]);
   });
 });

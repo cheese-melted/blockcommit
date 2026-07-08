@@ -88,6 +88,8 @@ export function readChangedFilePairs(info: CommitInfo): FilePair[] {
       "--patch",
       "-z",
       "--no-renames",
+      "--diff-algorithm=myers",
+      "--no-indent-heuristic",
       "--full-index",
       "--abbrev=40",
       "--no-ext-diff",

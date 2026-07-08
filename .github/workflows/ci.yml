@@ -14,6 +14,42 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build
+      - name: smoke test npm package
+        run: |
+          npm pack --dry-run
+          package="$(npm pack)"
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$package"
+          npx blockcommit --help >/dev/null
+          node --input-type=module - <<'NODE'
+          import { createRequire } from "node:module";
+          import { readFileSync } from "node:fs";
+
+          const module = await import("blockcommit");
+          const expected = [
+            "digestAlgorithm",
+            "digestCommit",
+            "renderIdentity",
+            "renderOps",
+            "schemaVersion",
+            "verifyCommit",
+            "verifyDigest"
+          ];
+          for (const key of expected) {
+            if (!(key in module)) {
+              throw new Error(`missing export ${key}`);
+            }
+          }
+
+          const require = createRequire(import.meta.url);
+          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v1.schema.json");
+          const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v1") {
+            throw new Error("packed schema export is invalid");
+          }
+          NODE
       # The published bin runs under node, not bun; exercise dist/cli.js the
       # way an npm user would. A synthetic repo keeps this independent of the
       # checkout's depth and of pull_request merge commits (which digest
