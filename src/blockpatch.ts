@@ -32,9 +32,13 @@ export interface RenderContext {
   removedLineIds: Set<string>;
 }
 
+export interface BlockPatchRenderResult extends BlockPatchRendering {
+  patch?: string;
+}
+
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
-export function renderBlockPatch(block: RenderableBlock, context: RenderContext): BlockPatchRendering {
+export function renderBlockPatch(block: RenderableBlock, context: RenderContext): BlockPatchRenderResult {
   const srcPath = block.srcLines?.[0]?.path;
   const dstPath = block.dstLines?.[0]?.path;
   const payloadSha = createHash("sha256").update(block.payload).digest("hex");
@@ -142,11 +146,11 @@ export function renderBlockPatch(block: RenderableBlock, context: RenderContext)
   return unsupported("block has no source or destination");
 }
 
-function rendered(patch: string): BlockPatchRendering {
+function rendered(patch: string): BlockPatchRenderResult {
   return { status: "rendered", patch };
 }
 
-function unsupported(reason: string): BlockPatchRendering {
+function unsupported(reason: string): BlockPatchRenderResult {
   return { status: "unsupported", reason };
 }
 

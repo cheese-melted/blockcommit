@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v1.schema.json",
+  "title": "blockcommit digest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "commit", "parent", "repo", "files", "blocks", "identity", "summary"],
+  "properties": {
+    "schema_version": { "const": "blockcommit.digest.v1" },
+    "commit": { "$ref": "#/$defs/gitOid" },
+    "parent": {
+      "anyOf": [
+        { "$ref": "#/$defs/gitOid" },
+        { "type": "null" }
+      ]
+    },
+    "repo": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/changedFile" }
+    },
+    "blocks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lineMoveBlock" }
+    },
+    "identity": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/identityEvent" }
+    },
+    "summary": { "$ref": "#/$defs/summary" }
+  },
+  "$defs": {
+    "gitOid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "mode": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$"
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "lineSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "start_line", "end_line", "line_count", "byte_start", "byte_end"],
+      "properties": {
+        "path": { "type": "string" },
+        "start_line": { "$ref": "#/$defs/positiveInteger" },
+        "end_line": { "$ref": "#/$defs/positiveInteger" },
+        "line_count": { "$ref": "#/$defs/positiveInteger" },
+        "byte_start": { "$ref": "#/$defs/nonNegativeInteger" },
+        "byte_end": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "blockpatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["rendered", "unsupported"] },
+        "reason": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "rendered" } },
+            "required": ["status"]
+          },
+          "then": { "not": { "required": ["reason"] } }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "unsupported" } },
+            "required": ["status"]
+          },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "ambiguous",
+        "duplicate_removed_candidates",
+        "duplicate_added_candidates"
+      ],
+      "properties": {
+        "algorithm": { "const": "exact-line-sha256-patience" },
+        "ambiguous": { "type": "boolean" },
+        "duplicate_removed_candidates": { "$ref": "#/$defs/nonNegativeInteger" },
+        "duplicate_added_candidates": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "lineMoveBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "src",
+        "dst",
+        "payload_sha256",
+        "payload_bytes",
+        "payload_lines",
+        "payload_encoding",
+        "match",
+        "blockpatch"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^bc_[0-9a-f]{16}$"
+        },
+        "kind": { "enum": ["move", "insert", "delete"] },
+        "src": {
+          "anyOf": [
+            { "$ref": "#/$defs/lineSpan" },
+            { "type": "null" }
+          ]
+        },
+        "dst": {
+          "anyOf": [
+            { "$ref": "#/$defs/lineSpan" },
+            { "type": "null" }
+          ]
+        },
+        "payload_sha256": { "$ref": "#/$defs/sha256" },
+        "payload_bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "payload_lines": { "$ref": "#/$defs/nonNegativeInteger" },
+        "payload_encoding": { "enum": ["utf-8", "base64"] },
+        "payload_text": { "type": "string" },
+        "payload_base64": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "match": { "$ref": "#/$defs/match" },
+        "blockpatch": { "$ref": "#/$defs/blockpatch" }
+      },
+      "oneOf": [
+        {
+          "properties": { "payload_encoding": { "const": "utf-8" } },
+          "required": ["payload_text"],
+          "not": { "required": ["payload_base64"] }
+        },
+        {
+          "properties": { "payload_encoding": { "const": "base64" } },
+          "required": ["payload_base64"],
+          "not": { "required": ["payload_text"] }
+        }
+      ]
+    },
+    "changedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "old_exists",
+        "new_exists",
+        "old_mode",
+        "new_mode",
+        "old_oid",
+        "new_oid",
+        "binary",
+        "old_lines",
+        "new_lines",
+        "old_sha256",
+        "new_sha256",
+        "line_digest_status"
+      ],
+      "properties": {
+        "path": { "type": "string" },
+        "old_exists": { "type": "boolean" },
+        "new_exists": { "type": "boolean" },
+        "old_mode": {
+          "anyOf": [
+            { "$ref": "#/$defs/mode" },
+            { "type": "null" }
+          ]
+        },
+        "new_mode": {
+          "anyOf": [
+            { "$ref": "#/$defs/mode" },
+            { "type": "null" }
+          ]
+        },
+        "old_oid": {
+          "anyOf": [
+            { "$ref": "#/$defs/gitOid" },
+            { "type": "null" }
+          ]
+        },
+        "new_oid": {
+          "anyOf": [
+            { "$ref": "#/$defs/gitOid" },
+            { "type": "null" }
+          ]
+        },
+        "binary": { "type": "boolean" },
+        "old_lines": { "$ref": "#/$defs/nonNegativeInteger" },
+        "new_lines": { "$ref": "#/$defs/nonNegativeInteger" },
+        "old_sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "new_sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "line_digest_status": {
+          "enum": ["represented", "partial", "unsupported"]
+        },
+        "unsupported_reason": {
+          "enum": ["binary", "mode_only", "submodule", "filetype", "unparsed_diff"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "line_digest_status": { "const": "represented" } },
+            "required": ["line_digest_status"]
+          },
+          "then": { "not": { "required": ["unsupported_reason"] } }
+        },
+        {
+          "if": {
+            "properties": { "line_digest_status": { "enum": ["partial", "unsupported"] } },
+            "required": ["line_digest_status"]
+          },
+          "then": { "required": ["unsupported_reason"] }
+        }
+      ]
+    },
+    "identityEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "lines", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "lines": { "$ref": "#/$defs/nonNegativeInteger" },
+        "sha256": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "identityMove": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "lines_moved", "blocks"],
+      "properties": {
+        "path": { "type": "string" },
+        "lines_moved": { "$ref": "#/$defs/nonNegativeInteger" },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^bc_[0-9a-f]{16}$"
+          }
+        }
+      }
+    },
+    "identityCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["old_file_lines_moved", "new_file_lines_from_old"],
+      "properties": {
+        "old_file_lines_moved": { "$ref": "#/$defs/ratio" },
+        "new_file_lines_from_old": { "$ref": "#/$defs/ratio" }
+      }
+    },
+    "identityEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "old_identity",
+        "moved_to",
+        "new_identity",
+        "confidence",
+        "coverage"
+      ],
+      "properties": {
+        "kind": { "enum": ["renamed", "path_reused"] },
+        "old_identity": { "$ref": "#/$defs/identityEndpoint" },
+        "moved_to": { "$ref": "#/$defs/identityMove" },
+        "new_identity": {
+          "anyOf": [
+            { "$ref": "#/$defs/identityEndpoint" },
+            { "type": "null" }
+          ]
+        },
+        "confidence": { "enum": ["exact", "partial"] },
+        "coverage": { "$ref": "#/$defs/identityCoverage" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "blocks",
+        "moves",
+        "insertions",
+        "deletions",
+        "rendered_blockpatches",
+        "unsupported_blockpatches"
+      ],
+      "properties": {
+        "files": { "$ref": "#/$defs/nonNegativeInteger" },
+        "blocks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "moves": { "$ref": "#/$defs/nonNegativeInteger" },
+        "insertions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "deletions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "rendered_blockpatches": { "$ref": "#/$defs/nonNegativeInteger" },
+        "unsupported_blockpatches": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    }
+  }
+}

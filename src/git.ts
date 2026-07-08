@@ -54,34 +54,44 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
   };
 }
 
-export function listCommits(cwd: string, range: string): string[] {
-  const repo = gitText(cwd, ["rev-parse", "--show-toplevel"]).trim();
-  return gitText(repo, ["rev-list", "--no-merges", "--reverse", range])
+export function tryResolveCommit(cwd: string, commitish: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${commitish}^{commit}`], {
+    cwd,
+    encoding: "utf8"
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+// Resolves the repo and every commit's parent in two git calls total, so
+// range walks don't pay per-commit rev-parse/rev-list spawns.
+export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
+  const repo = resolve(gitText(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  return gitText(repo, ["rev-list", "--no-merges", "--reverse", "--parents", range])
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [commit, ...parents] = line.split(/\s+/);
+      return { repo, commit, parent: parents[0] ?? null, diffBase: parents[0] ?? emptyTree };
+    });
+}
+
+export function listCommits(cwd: string, range: string): string[] {
+  return listCommitInfos(cwd, range).map((info) => info.commit);
 }
 
 export function readChangedFilePairs(info: CommitInfo): FilePair[] {
-  const entries = parseRawEntries(
+  const { entries, patch } = splitRawAndPatch(
     gitBuffer(info.repo, [
       "diff",
       "--raw",
+      "--patch",
       "-z",
       "--no-renames",
       "--full-index",
       "--abbrev=40",
-      info.diffBase,
-      info.commit
-    ])
-  );
-  const blobs = readBlobs(info.repo, collectBlobShas(entries));
-  const sections = splitPatchSections(
-    gitText(info.repo, [
-      "diff",
       "--no-ext-diff",
       "--no-color",
-      "--no-renames",
       "--no-textconv",
       "--submodule=short",
       "--unified=0",
@@ -89,6 +99,8 @@ export function readChangedFilePairs(info: CommitInfo): FilePair[] {
       info.commit
     ])
   );
+  const blobs = readBlobs(info.repo, collectBlobShas(entries));
+  const sections = splitPatchSections(patch);
 
   const expectedSections = entries.reduce((count, entry) => count + patchSectionsFor(entry), 0);
   const parsedSections = sections.length === expectedSections;
@@ -150,21 +162,35 @@ function collectBlobShas(entries: RawEntry[]): string[] {
   return [...shas];
 }
 
-function parseRawEntries(output: Buffer): RawEntry[] {
-  const tokens = output.toString("utf8").split("\0");
+// A combined `git diff --raw --patch -z` emits `:meta\0path\0` records, a
+// lone NUL closing the raw section, then the patch text.
+function splitRawAndPatch(output: Buffer): { entries: RawEntry[]; patch: string } {
   const entries: RawEntry[] = [];
+  let cursor = 0;
 
-  for (let index = 0; index + 1 < tokens.length; index += 2) {
-    const meta = tokens[index];
-    const path = tokens[index + 1];
-    if (!meta.startsWith(":")) {
-      throw new Error(`unexpected git diff --raw entry: ${meta}`);
+  while (cursor < output.length && output[cursor] === 0x3a) {
+    const metaEnd = output.indexOf(0, cursor);
+    const pathEnd = metaEnd === -1 ? -1 : output.indexOf(0, metaEnd + 1);
+    if (pathEnd === -1) {
+      throw new Error("unexpected end of git diff --raw output");
     }
+    const meta = output.subarray(cursor, metaEnd).toString("utf8");
     const [oldMode, newMode, oldSha, newSha, status] = meta.slice(1).split(" ");
-    entries.push({ oldMode, newMode, oldSha, newSha, status, path });
+    entries.push({
+      oldMode,
+      newMode,
+      oldSha,
+      newSha,
+      status,
+      path: output.subarray(metaEnd + 1, pathEnd).toString("utf8")
+    });
+    cursor = pathEnd + 1;
   }
 
-  return entries;
+  if (cursor < output.length && output[cursor] === 0) {
+    cursor += 1;
+  }
+  return { entries, patch: output.subarray(cursor).toString("utf8") };
 }
 
 function splitPatchSections(patch: string): string[] {

@@ -42,14 +42,17 @@ blockcommit digest HEAD --pretty            # JSON digest
 blockcommit digest HEAD --format ops        # compact movement + identity view
 blockcommit digest HEAD --format blockpatch # blockpatch rendering
 blockcommit digest HEAD --format blockpatch --strict
+blockcommit digest --range v1.0..main --format jsonl
 blockcommit verify HEAD                     # round-trip check one commit
+blockcommit verify HEAD --format json
 blockcommit verify digest.json              # verify a saved digest against its commit
+blockcommit verify digest.json --format json
 blockcommit verify --range v1.0..main       # round-trip check a whole range
 ```
 
-`digest [commit] [--cwd <repo>] [--pretty]` prints the JSON digest (the stable first output). `--format blockpatch` prints a `.blockpatch` rendering for blocks the current `blockpatch` format can represent directly; blocks that cannot be rendered remain JSON-only with an `unsupported` reason, and a summary of omitted blocks is printed to stderr. Add `--strict` to exit nonzero instead of emitting an incomplete blockpatch stream.
+`digest [commit] [--cwd <repo>] [--pretty]` prints the JSON digest (the stable first output). `digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line. `--format blockpatch` prints a derived `.blockpatch` rendering for blocks the current `blockpatch` format can represent directly; blocks that cannot be rendered remain JSON-only with an `unsupported` reason, and a summary of omitted blocks is printed to stderr. Add `--strict` to exit nonzero instead of emitting an incomplete blockpatch stream.
 
-`verify [commit]` rebuilds every represented changed file from its parent-commit content plus the digest blocks and byte-compares the result against what the commit actually contains. Files that cannot be represented as line blocks are still checked for explicit unsupported metadata. `verify digest.json` recomputes the digest for the referenced commit and fails if payload encodings, hashes, spans, file facts, or block facts do not match. `verify --range <rev-range>` verifies every non-merge commit `git rev-list` produces for the range.
+`verify [commit]` rebuilds every represented changed file from its parent-commit content plus the digest blocks and byte-compares the result against what the commit actually contains. Files that cannot be represented as line blocks are still checked for explicit unsupported metadata. `verify digest.json` recomputes the digest for the referenced commit and fails if payload encodings, hashes, spans, file facts, block facts, or identity events do not match. When an argument names both an existing file and a resolvable commit (a stray file named `main`, say), the commit wins; the argument is only read as a saved digest when it does not resolve as a commit. Add `--format json` to return the structured `VerifyResult` instead of human-readable lines. `verify --range <rev-range>` verifies every non-merge commit `git rev-list` produces for the range.
 
 ## How lines are paired
 
@@ -96,7 +99,7 @@ Coordinate semantics, since consumers will otherwise guess: `src` spans use **pa
         "duplicate_removed_candidates": 0,
         "duplicate_added_candidates": 0
       },
-      "blockpatch": { "status": "rendered", "patch": "…" }
+      "blockpatch": { "status": "rendered" }
     }
   ],
   "identity": [ /* derived identity events, see below */ ],
@@ -108,6 +111,8 @@ Coordinate semantics, since consumers will otherwise guess: `src` spans use **pa
 For represented files, every changed line of the commit appears in exactly one block, which is what makes `verify` possible: parent content minus all `src` spans, with payloads placed at their `dst` spans, must reproduce the new tree byte-for-byte.
 
 When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` or `"partial"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Agents should treat those entries as explicit "known unknowns" rather than infer from missing blocks.
+
+The published JSON Schema lives at `schema/blockcommit.digest.v1.schema.json` and is included in the npm package. It describes the canonical digest only; blockpatch document text is derived output from `--format blockpatch`, not cached inside JSON digests.
 
 ## Ops view
 

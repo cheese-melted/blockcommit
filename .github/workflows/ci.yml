@@ -14,3 +14,21 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build
+      # The published bin runs under node, not bun; exercise dist/cli.js the
+      # way an npm user would. A synthetic repo keeps this independent of the
+      # checkout's depth and of pull_request merge commits (which digest
+      # rejects as multi-parent).
+      - name: smoke test built CLI under node
+        run: |
+          repo="$(mktemp -d)"
+          git -C "$repo" init -q
+          git -C "$repo" config user.email ci@example.com
+          git -C "$repo" config user.name CI
+          printf 'one\ntwo\nthree\n' > "$repo/a.txt"
+          git -C "$repo" add . && git -C "$repo" commit -qm base
+          git -C "$repo" mv a.txt b.txt
+          printf 'added\n' > "$repo/a.txt"
+          git -C "$repo" add . && git -C "$repo" commit -qm move
+          node dist/cli.js digest HEAD --cwd "$repo" --format ops | grep -q '^M a.txt'
+          node dist/cli.js digest HEAD --cwd "$repo" --pretty > /dev/null
+          node dist/cli.js verify --range "$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD" --cwd "$repo"

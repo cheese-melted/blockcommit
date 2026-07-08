@@ -1,12 +1,13 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
+import Ajv from "ajv/dist/2020";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
 import { renderOps } from "../src/ops";
-import { verifyCommit } from "../src/verify";
+import { verifyCommit, verifyDigest } from "../src/verify";
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -109,6 +110,7 @@ describe("digestCommit", () => {
     });
     expect(digest.blocks.map((block) => block.kind).sort()).toEqual(["delete", "insert"]);
     expect(digest.blocks.every((block) => block.blockpatch.status === "rendered")).toBe(true);
+    expect(digest.blocks.some((block) => "patch" in block.blockpatch)).toBe(false);
   });
 
   test("keeps replacement insertions in JSON when their anchors are also deleted", () => {
@@ -184,6 +186,69 @@ describe("digestCommit", () => {
     });
   });
 
+  test("pairs duplicate-only whole-block moves by exact payload fallback", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "old.txt"), "hello world line\nhello world line\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "old.txt"]);
+    writeFileSync(join(repo, "new.txt"), "hello world line\nhello world line\n");
+    const commit = commitAll(repo, "move duplicate-only file");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(digest.summary).toMatchObject({
+      moves: 1,
+      insertions: 0,
+      deletions: 0
+    });
+    expect(digest.blocks[0]).toMatchObject({
+      kind: "move",
+      payload_lines: 2,
+      src: { path: "old.txt", start_line: 1, end_line: 2 },
+      dst: { path: "new.txt", start_line: 1, end_line: 2 },
+      match: {
+        ambiguous: true,
+        duplicate_removed_candidates: 1,
+        duplicate_added_candidates: 1
+      }
+    });
+    expect(digest.identity[0]).toMatchObject({
+      kind: "renamed",
+      old_identity: { path: "old.txt", lines: 2 },
+      moved_to: { path: "new.txt", lines_moved: 2 },
+      confidence: "exact"
+    });
+    expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
+  });
+
+  test("pairs short-line whole-block moves by exact payload fallback", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "old.txt"), "x=1\ny=2\nz=3\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "old.txt"]);
+    writeFileSync(join(repo, "new.txt"), "x=1\ny=2\nz=3\n");
+    const commit = commitAll(repo, "move short-line file");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(digest.summary).toMatchObject({
+      moves: 1,
+      insertions: 0,
+      deletions: 0
+    });
+    expect(digest.blocks[0]).toMatchObject({
+      kind: "move",
+      payload_text: "x=1\ny=2\nz=3\n",
+      src: { path: "old.txt", start_line: 1, end_line: 3 },
+      dst: { path: "new.txt", start_line: 1, end_line: 3 }
+    });
+    expect(digest.identity[0]).toMatchObject({
+      kind: "renamed",
+      confidence: "exact"
+    });
+    expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
+  });
+
   test("records chmod-only changes as unsupported file metadata with no line blocks", () => {
     const repo = makeRepo();
     git(repo, ["config", "core.filemode", "true"]);
@@ -220,7 +285,9 @@ describe("digestCommit", () => {
       payload_text: "two",
       payload_lines: 1
     });
-    expect(insert?.blockpatch.patch).toContain("\\ No newline at end of file");
+    const blockpatch = cli(["digest", commit, "--cwd", repo, "--format", "blockpatch"]);
+    expect(blockpatch.status).toBe(0);
+    expect(blockpatch.stdout).toContain("\\ No newline at end of file");
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -483,6 +550,29 @@ describe("verifyCommit", () => {
       expect(failures).toEqual([]);
     }
   });
+
+  test("verifyDigest rejects stale or malicious identity events", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "old.txt"), "alpha\nbeta\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "old.txt"]);
+    writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
+    const commit = commitAll(repo, "rename without git mv");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(verifyDigest({ cwd: repo, digest }).ok).toBe(true);
+
+    const tampered = JSON.parse(JSON.stringify(digest)) as typeof digest;
+    tampered.identity[0].kind = "path_reused";
+    const result = verifyDigest({ cwd: repo, digest: tampered });
+    expect(result.ok).toBe(false);
+    expect(result.files).toContainEqual({
+      path: "<digest>",
+      ok: false,
+      reason: "identity does not match recomputed digest"
+    });
+  });
 });
 
 describe("cli", () => {
@@ -510,6 +600,22 @@ describe("cli", () => {
     const result = cli(["digest", commit, "--cwd", repo, "--format", "ops"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^I \/dev\/null -> file\.txt:2\+1 sha=[0-9a-f]{12}$/m);
+  });
+
+  test("prints canonical digest ranges as JSONL", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+
+    const result = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
+    expect(result.status).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines).toHaveLength(1);
+    const digest = JSON.parse(lines[0]);
+    expect(digest.commit).toBe(second);
+    expect(digest.schema_version).toBe("blockcommit.digest.v1");
   });
 
   test("reports bad commits and unknown options", () => {
@@ -540,6 +646,13 @@ describe("cli", () => {
     expect(ok.status).toBe(0);
     expect(ok.stdout).toContain(`ok ${commit.slice(0, 12)} digest`);
 
+    const okJson = cli(["verify", digestPath, "--cwd", repo, "--format", "json"]);
+    expect(okJson.status).toBe(0);
+    expect(JSON.parse(okJson.stdout)).toMatchObject({
+      commit,
+      ok: true
+    });
+
     const tampered = JSON.parse(JSON.stringify(digest)) as typeof digest;
     tampered.blocks[0].payload_sha256 = "0".repeat(64);
     const tamperedPath = join(repo, "tampered.json");
@@ -548,5 +661,80 @@ describe("cli", () => {
     const fail = cli(["verify", tamperedPath, "--cwd", repo]);
     expect(fail.status).toBe(1);
     expect(fail.stdout).toContain("payload_sha256");
+  });
+
+  test("prefers a commit over a same-named file when verifying", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "base\n");
+    const commit = commitAll(repo, "base");
+    git(repo, ["branch", "dev"]);
+    writeFileSync(join(repo, "dev"), "not json\n");
+
+    const result = cli(["verify", "dev", "--cwd", repo], repo);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`ok ${commit.slice(0, 12)}`);
+  });
+
+  test("prints structured verify output for commits", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "base\n");
+    const commit = commitAll(repo, "base");
+
+    const result = cli(["verify", commit, "--cwd", repo, "--format", "json"]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      commit,
+      ok: true,
+      files: [{ path: "file.txt", ok: true }]
+    });
+  });
+
+  test("ships a JSON schema for the canonical digest", () => {
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v1.schema.json"), "utf8"));
+    expect(schema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        schema_version: { const: "blockcommit.digest.v1" }
+      }
+    });
+    expect(schema.$defs.blockpatch.properties.patch).toBeUndefined();
+  });
+});
+
+describe("digest schema", () => {
+  test("generated digests validate against the shipped schema", () => {
+    const schema = JSON.parse(
+      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v1.schema.json"), "utf8")
+    );
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(schema);
+
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.txt"), "keep\nmove one\nmove two\nmove three\n");
+    writeFileSync(join(repo, "b.txt"), "target\n");
+    const root = commitAll(repo, "base");
+
+    writeFileSync(join(repo, "a.txt"), "keep\nadd\n");
+    writeFileSync(join(repo, "b.txt"), "target\nmove one\nmove two\nmove three\n");
+    writeFileSync(join(repo, "bin.dat"), Buffer.from([0, 1, 2, 3]));
+    writeFileSync(join(repo, "latin.txt"), Buffer.from([0x66, 0xff, 0x0a]));
+    const moves = commitAll(repo, "moves, binary, non-utf8");
+
+    chmodSync(join(repo, "b.txt"), 0o755);
+    const modeOnly = commitAll(repo, "mode only");
+
+    const digests = [root, moves, modeOnly].map((commit) => digestCommit({ cwd: repo, commit }));
+    for (const digest of digests) {
+      validate(digest);
+      expect(validate.errors ?? []).toEqual([]);
+    }
+
+    // Guard that the fixtures still exercise the schema's conditional shapes.
+    const [rootDigest, movesDigest, modeOnlyDigest] = digests;
+    expect(rootDigest.parent).toBeNull();
+    expect(movesDigest.blocks.some((block) => block.payload_encoding === "base64")).toBe(true);
+    expect(movesDigest.files.some((file) => file.unsupported_reason === "binary")).toBe(true);
+    expect(movesDigest.identity.length).toBeGreaterThan(0);
+    expect(modeOnlyDigest.files.some((file) => file.unsupported_reason === "mode_only")).toBe(true);
   });
 });

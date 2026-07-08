@@ -7,6 +7,8 @@ export interface LineRecord {
   key: string;
   /** Whole-file record (binary mode): always eligible to anchor a pairing. */
   atomic?: boolean;
+  /** Memoized anchor eligibility, filled in lazily during pairing. */
+  anchorEligible?: boolean;
 }
 
 export function splitLineRecords(path: string, bytes: Buffer): LineRecord[] {
@@ -14,11 +16,9 @@ export function splitLineRecords(path: string, bytes: Buffer): LineRecord[] {
   let start = 0;
   let lineNo = 1;
 
-  for (let index = 0; index < bytes.length; index += 1) {
-    if (bytes[index] !== 0x0a) {
-      continue;
-    }
-    const end = index + 1;
+  while (start < bytes.length) {
+    const newline = bytes.indexOf(0x0a, start);
+    const end = newline === -1 ? bytes.length : newline + 1;
     const line = Buffer.from(bytes.subarray(start, end));
     lines.push({
       path,
@@ -30,18 +30,6 @@ export function splitLineRecords(path: string, bytes: Buffer): LineRecord[] {
     });
     start = end;
     lineNo += 1;
-  }
-
-  if (start < bytes.length) {
-    const line = Buffer.from(bytes.subarray(start));
-    lines.push({
-      path,
-      lineNo,
-      byteStart: start,
-      byteEnd: bytes.length,
-      bytes: line,
-      key: lineKey(line)
-    });
   }
 
   return lines;
@@ -134,10 +122,10 @@ export function countLineBytes(bytes: Buffer): number {
   }
 
   let lines = 0;
-  for (const byte of bytes) {
-    if (byte === 0x0a) {
-      lines += 1;
-    }
+  let index = bytes.indexOf(0x0a);
+  while (index !== -1) {
+    lines += 1;
+    index = bytes.indexOf(0x0a, index + 1);
   }
   return bytes[bytes.length - 1] === 0x0a ? lines : lines + 1;
 }

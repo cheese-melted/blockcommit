@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { lineId, renderBlockPatch, type RenderContext } from "./blockpatch";
-import { getCommitInfo, readChangedFilePairs, type FilePair } from "./git";
+import { lineId, renderBlockPatch, type BlockPatchRenderResult, type RenderContext } from "./blockpatch";
+import { getCommitInfo, readChangedFilePairs, type CommitInfo, type FilePair } from "./git";
 import { deriveIdentity } from "./identity";
 import {
   concatLineBytes,
@@ -15,6 +15,7 @@ import {
   type BlockKind,
   type BlockCommitDigest,
   type ChangedFileDigest,
+  type BlockPatchRendering,
   type LineDigestStatus,
   type LineMoveBlock,
   type LineSpan,
@@ -53,6 +54,10 @@ interface BlockDraft {
   targetInsertBeforeLine?: number;
 }
 
+export interface BlockPatchDocument extends BlockPatchRenderResult {
+  id: string;
+}
+
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface DigestOptions {
@@ -68,6 +73,7 @@ export interface FileState {
 export interface DigestComputation {
   digest: BlockCommitDigest;
   fileStates: Map<string, FileState>;
+  blockpatches: BlockPatchDocument[];
 }
 
 export function digestCommit(options: DigestOptions = {}): BlockCommitDigest {
@@ -76,7 +82,10 @@ export function digestCommit(options: DigestOptions = {}): BlockCommitDigest {
 
 export function computeDigest(options: DigestOptions = {}): DigestComputation {
   const cwd = options.cwd ?? process.cwd();
-  const info = getCommitInfo(cwd, options.commit ?? "HEAD");
+  return computeDigestFor(getCommitInfo(cwd, options.commit ?? "HEAD"));
+}
+
+export function computeDigestFor(info: CommitInfo): DigestComputation {
   const pairs = readChangedFilePairs(info);
   const oldLinesByPath = new Map<string, LineRecord[]>();
   const oldExists = new Set<string>();
@@ -149,8 +158,10 @@ export function computeDigest(options: DigestOptions = {}): DigestComputation {
     newExists,
     removedLineIds: new Set(removed.map((line) => lineId(line.line.path, line.line.lineNo)))
   };
-  const blocks = drafts.map((draft) => buildBlock(draft, renderContext));
-  const rendered = blocks.filter((block) => block.blockpatch.status === "rendered").length;
+  const builtBlocks = drafts.map((draft) => buildBlock(draft, renderContext));
+  const blocks = builtBlocks.map((built) => built.block);
+  const blockpatches = builtBlocks.map((built) => built.blockpatch);
+  const rendered = blockpatches.filter((blockpatch) => blockpatch.status === "rendered").length;
 
   const digest: BlockCommitDigest = {
     schema_version: schemaVersion,
@@ -171,7 +182,7 @@ export function computeDigest(options: DigestOptions = {}): DigestComputation {
     }
   };
 
-  return { digest, fileStates };
+  return { digest, fileStates, blockpatches };
 }
 
 interface InitialFileStatus {
@@ -349,18 +360,44 @@ function pairLines(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
     }
   }
 
+  pairExactUnmatchedBlocks(removed, added, paired);
   annotateMatchMetadata(paired, removed, added);
   return paired;
 }
 
 const anchorMinAlnum = 4;
-const alnumPattern = /[\p{L}\p{N}]/gu;
+const nonAsciiAlnum = /[\p{L}\p{N}]/u;
 
+// Memoized on the record: pairLines re-anchors until it reaches a fixed
+// point, and this check dominated digest time when recomputed per round.
 function canAnchor(line: LineRecord): boolean {
   if (line.atomic === true) {
     return true;
   }
-  return (line.key.match(alnumPattern)?.length ?? 0) >= anchorMinAlnum;
+  line.anchorEligible ??= hasAnchorContent(line.key);
+  return line.anchorEligible;
+}
+
+// key is latin1-decoded, so every character is a single code unit below
+// 0x100; ASCII alphanumerics short-circuit the Unicode class.
+function hasAnchorContent(key: string): boolean {
+  let count = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    const code = key.charCodeAt(index);
+    const alnum =
+      (code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x80 && nonAsciiAlnum.test(key[index]));
+    if (!alnum) {
+      continue;
+    }
+    count += 1;
+    if (count >= anchorMinAlnum) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function uniqueContentAnchors(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
@@ -426,6 +463,71 @@ function pairUp(src: RemovedLine, dst: AddedLine, paired: PairedLine[]): void {
   src.paired = dst;
   dst.paired = src;
   paired.push({ src, dst, match: defaultMatchMetadata() });
+}
+
+function pairExactUnmatchedBlocks(removed: RemovedLine[], added: AddedLine[], paired: PairedLine[]): void {
+  const removedByPayload = uniqueGroupsByPayload(groupUnpairedRemovedLines(removed));
+  const addedByPayload = uniqueGroupsByPayload(groupUnpairedAddedLines(added));
+
+  for (const [payloadKey, srcGroup] of removedByPayload) {
+    if (srcGroup === null || !pairableExactFallbackGroup(srcGroup)) {
+      continue;
+    }
+    const dstGroup = addedByPayload.get(payloadKey);
+    if (dstGroup === undefined || dstGroup === null || srcGroup.length !== dstGroup.length) {
+      continue;
+    }
+    for (let index = 0; index < srcGroup.length; index += 1) {
+      pairUp(srcGroup[index], dstGroup[index] as AddedLine, paired);
+    }
+  }
+}
+
+function groupUnpairedRemovedLines(lines: RemovedLine[]): RemovedLine[][] {
+  return groupUnpairedLines(lines, (previous, current) => adjacentOneSided(previous, current, "removed"));
+}
+
+function groupUnpairedAddedLines(lines: AddedLine[]): AddedLine[][] {
+  return groupUnpairedLines(lines, (previous, current) => adjacentOneSided(previous, current, "added"));
+}
+
+function groupUnpairedLines<T extends AddedLine | RemovedLine>(
+  lines: T[],
+  adjacent: (previous: T, current: T) => boolean
+): T[][] {
+  const sorted = lines
+    .filter((line) => line.paired === undefined)
+    .sort((left, right) => compareLineRecords(left.line, right.line));
+  const groups: T[][] = [];
+
+  for (const line of sorted) {
+    const group = groups.at(-1);
+    const previous = group?.at(-1);
+    if (group !== undefined && previous !== undefined && adjacent(previous, line)) {
+      group.push(line);
+    } else {
+      groups.push([line]);
+    }
+  }
+
+  return groups;
+}
+
+function uniqueGroupsByPayload<T extends AddedLine | RemovedLine>(groups: T[][]): Map<string, T[] | null> {
+  const byPayload = new Map<string, T[] | null>();
+  for (const group of groups) {
+    const payloadKey = exactGroupPayloadKey(group);
+    byPayload.set(payloadKey, byPayload.has(payloadKey) ? null : group);
+  }
+  return byPayload;
+}
+
+function exactGroupPayloadKey(group: Array<AddedLine | RemovedLine>): string {
+  return `${group.length}\0${sha256(concatLineBytes(group.map((line) => line.line)))}`;
+}
+
+function pairableExactFallbackGroup(group: Array<AddedLine | RemovedLine>): boolean {
+  return hasAnchorContent(concatLineBytes(group.map((line) => line.line)).toString("latin1"));
 }
 
 function annotateMatchMetadata(paired: PairedLine[], removed: RemovedLine[], added: AddedLine[]): void {
@@ -545,7 +647,12 @@ function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function buildBlock(draft: BlockDraft, context: RenderContext): LineMoveBlock {
+interface BuiltBlock {
+  block: LineMoveBlock;
+  blockpatch: BlockPatchDocument;
+}
+
+function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
   const srcLines = draft.srcLines;
   const dstLines = draft.dstLines;
   const payload = srcLines !== null ? concatLineBytes(srcLines) : concatLineBytes(dstLines ?? []);
@@ -554,7 +661,7 @@ function buildBlock(draft: BlockDraft, context: RenderContext): LineMoveBlock {
   const src = srcLines === null ? null : spanForLines(srcLines);
   const dst = dstLines === null ? null : spanForLines(dstLines);
   const id = stableBlockId(kind, src, dst, hash);
-  const blockpatch = safeRenderBlockPatch({
+  const renderedBlockpatch = safeRenderBlockPatch({
     id,
     srcLines,
     dstLines,
@@ -564,18 +671,27 @@ function buildBlock(draft: BlockDraft, context: RenderContext): LineMoveBlock {
   const encoded = encodePayload(payload);
 
   return {
-    id,
-    kind,
-    src,
-    dst,
-    payload_sha256: hash,
-    payload_bytes: payload.length,
-    payload_lines: srcLines?.length ?? dstLines?.length ?? 0,
-    payload_encoding: encoded.encoding,
-    ...encoded.fields,
-    match: blockMatchMetadata(draft),
-    blockpatch
+    block: {
+      id,
+      kind,
+      src,
+      dst,
+      payload_sha256: hash,
+      payload_bytes: payload.length,
+      payload_lines: srcLines?.length ?? dstLines?.length ?? 0,
+      payload_encoding: encoded.encoding,
+      ...encoded.fields,
+      match: blockMatchMetadata(draft),
+      blockpatch: canonicalBlockpatch(renderedBlockpatch)
+    },
+    blockpatch: { id, ...renderedBlockpatch }
   };
+}
+
+function canonicalBlockpatch(result: BlockPatchRenderResult): BlockPatchRendering {
+  return result.reason === undefined
+    ? { status: result.status }
+    : { status: result.status, reason: result.reason };
 }
 
 function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | null, payloadSha: string): string {
@@ -614,7 +730,7 @@ function safeRenderBlockPatch(
     targetInsertBeforeLine?: number;
   },
   context: RenderContext
-): LineMoveBlock["blockpatch"] {
+): BlockPatchRenderResult {
   try {
     return renderBlockPatch(block, context);
   } catch (error) {

@@ -18,7 +18,6 @@ export interface LineSpan {
 
 export interface BlockPatchRendering {
   status: BlockPatchStatus;
-  patch?: string;
   reason?: string;
 }
 

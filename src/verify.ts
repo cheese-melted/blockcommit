@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { computeDigest, type DigestOptions, type FileState } from "./digest";
+import { computeDigest, computeDigestFor, type DigestComputation, type DigestOptions, type FileState } from "./digest";
+import { type CommitInfo } from "./git";
 import { countLineBytes, type LineRecord } from "./lines";
 import {
   schemaVersion,
@@ -20,7 +21,14 @@ export interface VerifyDigestOptions {
 // A digest that survives this proves the blocks fully and consistently
 // describe the commit.
 export function verifyCommit(options: DigestOptions = {}): VerifyResult {
-  const { digest, fileStates } = computeDigest(options);
+  return verifyComputation(computeDigest(options));
+}
+
+export function verifyCommitFor(info: CommitInfo): VerifyResult {
+  return verifyComputation(computeDigestFor(info));
+}
+
+function verifyComputation({ digest, fileStates }: DigestComputation): VerifyResult {
   const files: FileVerification[] = [];
 
   for (const file of digest.files) {
@@ -112,6 +120,7 @@ function compareDigestFacts(supplied: BlockCommitDigest, recomputed: BlockCommit
   checks.push(compareValue("<digest>", "commit", supplied.commit, recomputed.commit));
   checks.push(compareValue("<digest>", "parent", supplied.parent, recomputed.parent));
   checks.push(compareValue("<digest>", "summary", supplied.summary, recomputed.summary));
+  checks.push(compareValue("<digest>", "identity", supplied.identity, recomputed.identity));
   checks.push(...compareFiles(supplied.files, recomputed.files));
   checks.push(...compareBlocks(supplied.blocks, recomputed.blocks));
   return checks;

@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { digestCommit } from "./digest";
-import { listCommits } from "./git";
+import { computeDigest, computeDigestFor, digestCommit } from "./digest";
+import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
 import { renderOps } from "./ops";
-import { verifyCommit, verifyDigest } from "./verify";
-import { type BlockCommitDigest } from "./types";
+import { verifyCommitFor, verifyDigest } from "./verify";
+import { type BlockCommitDigest, type VerifyResult } from "./types";
 
-type Format = "json" | "ops" | "blockpatch";
+type Format = "json" | "jsonl" | "ops" | "blockpatch";
 
 interface CliOptions {
   command: "digest" | "verify" | "help";
   commit: string;
   cwd?: string;
-  format: Format;
+  format?: Format;
   pretty: boolean;
   strict: boolean;
   range?: string;
@@ -30,32 +30,23 @@ async function main(argv: string[]): Promise<number> {
     return runVerify(options);
   }
 
+  if (options.command === "digest" && options.range !== undefined) {
+    return runDigestRange(options);
+  }
+
+  const format = options.format ?? "json";
+  if (format === "blockpatch") {
+    return runDigestBlockpatch(options);
+  }
+
   const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-  if (options.format === "ops") {
+  if (format === "ops") {
     process.stdout.write(renderOps(digest));
     return 0;
   }
-  if (options.format === "blockpatch") {
-    const unsupportedBlocks = digest.blocks.filter((block) => block.blockpatch.status !== "rendered");
-    if (options.strict && unsupportedBlocks.length > 0) {
-      for (const block of unsupportedBlocks) {
-        process.stderr.write(
-          `unsupported ${block.id}: ${block.blockpatch.reason ?? "not representable as blockpatch"}\n`
-        );
-      }
-      return 1;
-    }
-    const rendered = digest.blocks
-      .filter((block) => block.blockpatch.status === "rendered" && block.blockpatch.patch !== undefined)
-      .map((block) => block.blockpatch.patch)
-      .join("\n");
-    process.stdout.write(rendered);
-    const unsupported = digest.summary.unsupported_blockpatches;
-    if (unsupported > 0) {
-      process.stderr.write(
-        `warning: ${unsupported} of ${digest.summary.blocks} blocks are not representable as blockpatch and were omitted; use --format json for the full digest\n`
-      );
-    }
+  if (format === "jsonl") {
+    process.stdout.write(JSON.stringify(digest));
+    process.stdout.write("\n");
     return 0;
   }
 
@@ -64,23 +55,70 @@ async function main(argv: string[]): Promise<number> {
   return 0;
 }
 
+function runDigestBlockpatch(options: CliOptions): number {
+  const { digest, blockpatches } = computeDigest({ cwd: options.cwd, commit: options.commit });
+  const unsupportedBlocks = blockpatches.filter((blockpatch) => blockpatch.status !== "rendered");
+  if (options.strict && unsupportedBlocks.length > 0) {
+    for (const blockpatch of unsupportedBlocks) {
+      process.stderr.write(
+        `unsupported ${blockpatch.id}: ${blockpatch.reason ?? "not representable as blockpatch"}\n`
+      );
+    }
+    return 1;
+  }
+  const rendered = blockpatches
+    .filter((blockpatch) => blockpatch.status === "rendered" && blockpatch.patch !== undefined)
+    .map((blockpatch) => blockpatch.patch)
+    .join("\n");
+  process.stdout.write(rendered);
+  const unsupported = digest.summary.unsupported_blockpatches;
+  if (unsupported > 0) {
+    process.stderr.write(
+      `warning: ${unsupported} of ${digest.summary.blocks} blocks are not representable as blockpatch and were omitted; use --format json for the full digest\n`
+    );
+  }
+  return 0;
+}
+
+function runDigestRange(options: CliOptions): number {
+  const format = options.format ?? "jsonl";
+  if (format !== "jsonl") {
+    throw new Error("digest --range only supports --format jsonl");
+  }
+  for (const info of listCommitInfos(options.cwd ?? process.cwd(), options.range!)) {
+    process.stdout.write(JSON.stringify(computeDigestFor(info).digest));
+    process.stdout.write("\n");
+  }
+  return 0;
+}
+
 function runVerify(options: CliOptions): number {
-  if (options.range === undefined && digestPathExists(options.commit)) {
+  // A name can be both a file and a ref; the ref wins so `verify main` never
+  // silently reads a stray file named main.
+  if (
+    options.range === undefined &&
+    digestPathExists(options.commit) &&
+    tryResolveCommit(options.cwd ?? process.cwd(), options.commit) === null
+  ) {
     return runVerifyDigest(options);
   }
 
-  const commits = options.range === undefined
-    ? [options.commit]
-    : listCommits(options.cwd ?? process.cwd(), options.range);
-  let failures = 0;
+  const cwd = options.cwd ?? process.cwd();
+  const infos = options.range === undefined
+    ? [getCommitInfo(cwd, options.commit)]
+    : listCommitInfos(cwd, options.range);
+  const results: VerifyResult[] = [];
 
-  for (const commit of commits) {
-    const result = verifyCommit({ cwd: options.cwd, commit });
+  for (const info of infos) {
+    const result = verifyCommitFor(info);
+    results.push(result);
+    if (options.format === "json") {
+      continue;
+    }
     if (result.ok) {
       process.stdout.write(`ok ${result.commit.slice(0, 12)} (${result.files.length} files)\n`);
       continue;
     }
-    failures += 1;
     for (const file of result.files) {
       if (!file.ok) {
         process.stdout.write(`FAIL ${result.commit.slice(0, 12)} ${file.path}: ${file.reason}\n`);
@@ -88,8 +126,12 @@ function runVerify(options: CliOptions): number {
     }
   }
 
-  if (commits.length > 1) {
-    process.stdout.write(`verified ${commits.length - failures}/${commits.length} commits\n`);
+  const failures = results.filter((result) => !result.ok).length;
+  if (options.format === "json") {
+    process.stdout.write(JSON.stringify(results.length === 1 ? results[0] : results, null, options.pretty ? 2 : 0));
+    process.stdout.write("\n");
+  } else if (infos.length > 1) {
+    process.stdout.write(`verified ${infos.length - failures}/${infos.length} commits\n`);
   }
   return failures === 0 ? 0 : 1;
 }
@@ -98,6 +140,11 @@ function runVerifyDigest(options: CliOptions): number {
   const path = resolve(process.cwd(), options.commit);
   const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
   const result = verifyDigest({ cwd: options.cwd, digest });
+  if (options.format === "json") {
+    process.stdout.write(JSON.stringify(result, null, options.pretty ? 2 : 0));
+    process.stdout.write("\n");
+    return result.ok ? 0 : 1;
+  }
   if (result.ok) {
     process.stdout.write(`ok ${result.commit.slice(0, 12)} digest\n`);
     return 0;
@@ -129,7 +176,6 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command: first,
     commit: "HEAD",
-    format: "json",
     pretty: false,
     strict: false
   };
@@ -153,11 +199,11 @@ function parseArgs(argv: string[]): CliOptions {
       options.cwd = arg.slice("--cwd=".length);
       continue;
     }
-    if (options.command === "verify" && arg === "--range") {
+    if (arg === "--range") {
       options.range = requireValue(args, arg);
       continue;
     }
-    if (options.command === "verify" && arg?.startsWith("--range=")) {
+    if (arg?.startsWith("--range=")) {
       options.range = arg.slice("--range=".length);
       continue;
     }
@@ -180,10 +226,13 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (options.range !== undefined && sawCommit) {
-    throw new Error("verify takes either a commit or --range, not both");
+    throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
   if (options.strict && (options.command !== "digest" || options.format !== "blockpatch")) {
     throw new Error("--strict is only supported with digest --format blockpatch");
+  }
+  if (options.command === "verify" && options.format !== undefined && options.format !== "json") {
+    throw new Error("verify only supports --format json");
   }
 
   return options;
@@ -198,7 +247,7 @@ function requireValue(args: string[], flag: string): string {
 }
 
 function parseFormat(value: string): Format {
-  if (value === "json" || value === "ops" || value === "blockpatch") {
+  if (value === "json" || value === "jsonl" || value === "ops" || value === "blockpatch") {
     return value;
   }
   throw new Error(`unknown format: ${value}`);
@@ -211,8 +260,10 @@ Usage:
   blockcommit digest [commit] [--cwd <repo>] [--pretty]
   blockcommit digest [commit] --format ops
   blockcommit digest [commit] --format blockpatch [--strict]
+  blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
   blockcommit verify digest.json [--cwd <repo>]
+  blockcommit verify [commit|digest.json] --format json [--cwd <repo>]
   blockcommit verify --range <rev-range> [--cwd <repo>]
 
 Commands:
@@ -224,6 +275,7 @@ Commands:
 
 Formats:
   json        full line-move digest (canonical)
+  jsonl       one canonical digest JSON record per line, for digest ranges
   ops         compact movement view: one line per block plus derived
               identity events (renames, path reuse)
   blockpatch  rendered blockpatch documents for directly representable blocks
