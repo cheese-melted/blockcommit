@@ -136,10 +136,9 @@ describe("digestCommit", () => {
       deletions: 1
     });
     expect(digest.blocks.map((block) => block.kind).sort()).toEqual(["delete", "insert"]);
-    expect(digest.blocks.some((block) => "blockpatch" in block)).toBe(false);
   });
 
-  test("keeps replacement insertions in JSON when their anchors are also deleted", () => {
+  test("keeps replacement insertions when their anchors are also deleted", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "before\nold\nafter\n");
     commitAll(repo, "base");
@@ -150,7 +149,6 @@ describe("digestCommit", () => {
     const digest = digestCommit({ cwd: repo, commit });
     const insert = digest.blocks.find((block) => block.kind === "insert");
     expect(insert?.payload_text).toBe("new\n");
-    expect(insert).not.toHaveProperty("blockpatch");
   });
 
   test("does not pair coincidental trivial lines as moves", () => {
@@ -329,6 +327,29 @@ describe("digestCommit", () => {
     });
   });
 
+  test("represents content changes even when file mode also changes", () => {
+    const repo = makeRepo();
+    git(repo, ["config", "core.filemode", "true"]);
+    const script = join(repo, "script.sh");
+    writeFileSync(script, "echo hi\n");
+    commitAll(repo, "base");
+
+    chmodSync(script, 0o755);
+    writeFileSync(script, "echo hi\necho bye\n");
+    const commit = commitAll(repo, "chmod and edit script");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(digest.files[0]).toMatchObject({
+      path: "script.sh",
+      old_mode: "100644",
+      new_mode: "100755",
+      line_digest_status: "represented"
+    });
+    expect(digest.files[0].unsupported_reason).toBeUndefined();
+    expect(digest.summary.insertions).toBe(1);
+    expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
+  });
+
   test("preserves no-newline-at-EOF payloads", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "one\n");
@@ -344,9 +365,6 @@ describe("digestCommit", () => {
       payload_text: "two",
       payload_lines: 1
     });
-    const blockpatch = cli(["digest", commit, "--cwd", repo, "--format", "blockpatch"]);
-    expect(blockpatch.status).toBe(0);
-    expect(blockpatch.stdout).toContain("\\ No newline at end of file");
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -387,7 +405,6 @@ describe("digestCommit", () => {
       payload_lines: 1
     });
     expect(insert?.payload_text).toBeUndefined();
-    expect(insert).not.toHaveProperty("blockpatch");
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -693,20 +710,6 @@ describe("verifyCommit", () => {
 });
 
 describe("cli", () => {
-  test("--format blockpatch --strict fails when any block is unsupported", () => {
-    const repo = makeRepo();
-    writeFileSync(join(repo, "file.txt"), "before\nold\nafter\n");
-    commitAll(repo, "base");
-
-    writeFileSync(join(repo, "file.txt"), "before\nnew\nafter\n");
-    const commit = commitAll(repo, "replace line");
-
-    const result = cli(["digest", commit, "--cwd", repo, "--format", "blockpatch", "--strict"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("unsupported bc_");
-    expect(result.stdout).toBe("");
-  });
-
   test("supports --cwd for digesting another repository", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "base\n");
@@ -770,6 +773,34 @@ describe("cli", () => {
     const unknownOption = cli(["digest", "--definitely-unknown"], repo);
     expect(unknownOption.status).toBe(1);
     expect(unknownOption.stderr).toContain("unknown option");
+  });
+
+  test("rejects --pretty where it has no effect", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+
+    const content = cli(["content", second, "--cwd", repo, "--pretty"]);
+    expect(content.status).toBe(1);
+    expect(content.stderr).toContain("content does not support --pretty");
+
+    const identity = cli(["identity", second, "--cwd", repo, "--pretty"]);
+    expect(identity.status).toBe(1);
+    expect(identity.stderr).toContain("identity does not support --pretty");
+
+    const digestRange = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    expect(digestRange.status).toBe(1);
+    expect(digestRange.stderr).toContain("digest --range does not support --pretty");
+
+    const digestJsonl = cli(["digest", second, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    expect(digestJsonl.status).toBe(1);
+    expect(digestJsonl.stderr).toContain("digest --format jsonl does not support --pretty");
+
+    const verify = cli(["verify", second, "--cwd", repo, "--pretty"]);
+    expect(verify.status).toBe(1);
+    expect(verify.stderr).toContain("verify does not support --pretty without --format json");
   });
 
   test("verifies digest JSON files against their referenced commit", () => {
@@ -842,7 +873,6 @@ describe("cli", () => {
         algorithm: { $ref: "#/$defs/algorithm" }
       }
     });
-    expect(schema.$defs.blockpatch).toBeUndefined();
   });
 });
 

@@ -5,8 +5,6 @@ export interface LineRecord {
   byteEnd: number;
   bytes: Buffer;
   key: string;
-  /** Whole-file record (binary mode): always eligible to anchor a pairing. */
-  atomic?: boolean;
   /** Memoized anchor eligibility, filled in lazily during pairing. */
   anchorEligible?: boolean;
 }
@@ -46,23 +44,6 @@ export function isBinary(bytes: Buffer): boolean {
   return bytes.subarray(0, end).includes(0);
 }
 
-export function singleRecord(path: string, bytes: Buffer): LineRecord[] {
-  if (bytes.length === 0) {
-    return [];
-  }
-  return [
-    {
-      path,
-      lineNo: 1,
-      byteStart: 0,
-      byteEnd: bytes.length,
-      bytes: Buffer.from(bytes),
-      key: lineKey(bytes),
-      atomic: true
-    }
-  ];
-}
-
 export function concatLineBytes(lines: LineRecord[]): Buffer {
   return Buffer.concat(lines.map((line) => line.bytes));
 }
@@ -89,31 +70,6 @@ export function spanForLines(lines: LineRecord[]): {
     byte_start: first.byteStart,
     byte_end: last.byteEnd
   };
-}
-
-export function previousLine(lines: LineRecord[], oneBasedLine: number): Buffer {
-  if (oneBasedLine <= 1) {
-    return Buffer.alloc(0);
-  }
-  return lines[oneBasedLine - 2]?.bytes ?? Buffer.alloc(0);
-}
-
-export function nextLine(lines: LineRecord[], oneBasedLine: number): Buffer {
-  return lines[oneBasedLine]?.bytes ?? Buffer.alloc(0);
-}
-
-export function lineBeforeInsertion(lines: LineRecord[], insertBeforeLine: number): Buffer {
-  if (insertBeforeLine <= 1) {
-    return Buffer.alloc(0);
-  }
-  return lines[insertBeforeLine - 2]?.bytes ?? lines.at(-1)?.bytes ?? Buffer.alloc(0);
-}
-
-export function lineAfterInsertion(lines: LineRecord[], insertBeforeLine: number): Buffer {
-  if (insertBeforeLine <= 0) {
-    return lines[0]?.bytes ?? Buffer.alloc(0);
-  }
-  return lines[insertBeforeLine - 1]?.bytes ?? Buffer.alloc(0);
 }
 
 export function countLineBytes(bytes: Buffer): number {

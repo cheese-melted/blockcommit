@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { computeDigest, computeDigestFor, digestCommit } from "./digest";
+import { computeDigestFor, digestCommit } from "./digest";
 import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
 import { renderContent } from "./content";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
 
-type Format = "json" | "jsonl" | "blockpatch";
+type Format = "json" | "jsonl";
 
 interface CliOptions {
   command: "digest" | "content" | "identity" | "identity-from" | "identity-to" | "verify" | "help";
@@ -16,7 +16,6 @@ interface CliOptions {
   cwd?: string;
   format?: Format;
   pretty: boolean;
-  strict: boolean;
   range?: string;
 }
 
@@ -54,12 +53,8 @@ async function main(argv: string[]): Promise<number> {
     return runDigestRange(options);
   }
 
-  const format = options.format ?? "json";
-  if (format === "blockpatch") {
-    return runDigestBlockpatch(options);
-  }
-
   const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+  const format = options.format ?? "json";
   if (format === "jsonl") {
     process.stdout.write(JSON.stringify(digest));
     process.stdout.write("\n");
@@ -68,31 +63,6 @@ async function main(argv: string[]): Promise<number> {
 
   process.stdout.write(JSON.stringify(digest, null, options.pretty ? 2 : 0));
   process.stdout.write("\n");
-  return 0;
-}
-
-function runDigestBlockpatch(options: CliOptions): number {
-  const { digest, blockpatches } = computeDigest({ cwd: options.cwd, commit: options.commit });
-  const unsupportedBlocks = blockpatches.filter((blockpatch) => blockpatch.status !== "rendered");
-  if (options.strict && unsupportedBlocks.length > 0) {
-    for (const blockpatch of unsupportedBlocks) {
-      process.stderr.write(
-        `unsupported ${blockpatch.id}: ${blockpatch.reason ?? "not representable as blockpatch"}\n`
-      );
-    }
-    return 1;
-  }
-  const rendered = blockpatches
-    .filter((blockpatch) => blockpatch.status === "rendered" && blockpatch.patch !== undefined)
-    .map((blockpatch) => blockpatch.patch)
-    .join("\n");
-  process.stdout.write(rendered);
-  const unsupported = unsupportedBlocks.length;
-  if (unsupported > 0) {
-    process.stderr.write(
-      `warning: ${unsupported} of ${digest.summary.blocks} blocks are not representable as blockpatch and were omitted; use --format json for the full digest\n`
-    );
-  }
   return 0;
 }
 
@@ -188,7 +158,7 @@ function parseArgs(argv: string[]): CliOptions {
   const args = [...argv];
   const first = args.shift();
   if (first === undefined || first === "help" || first === "--help" || first === "-h") {
-    return { command: "help", commit: "HEAD", format: "json", pretty: false, strict: false };
+    return { command: "help", commit: "HEAD", format: "json", pretty: false };
   }
 
   if (
@@ -205,8 +175,7 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command: first,
     commit: "HEAD",
-    pretty: false,
-    strict: false
+    pretty: false
   };
   let sawCommit = false;
 
@@ -214,10 +183,6 @@ function parseArgs(argv: string[]): CliOptions {
     const arg = args.shift();
     if (arg === "--pretty") {
       options.pretty = true;
-      continue;
-    }
-    if (arg === "--strict") {
-      options.strict = true;
       continue;
     }
     if (arg === "--cwd" || arg === "-C") {
@@ -263,11 +228,20 @@ function parseArgs(argv: string[]): CliOptions {
   if (isViewCommand(options.command) && options.format !== undefined) {
     throw new Error(`${options.command} does not support --format`);
   }
-  if (options.strict && (options.command !== "digest" || options.format !== "blockpatch")) {
-    throw new Error("--strict is only supported with digest --format blockpatch");
+  if (isViewCommand(options.command) && options.pretty) {
+    throw new Error(`${options.command} does not support --pretty`);
+  }
+  if (options.command === "digest" && options.range !== undefined && options.pretty) {
+    throw new Error("digest --range does not support --pretty");
+  }
+  if (options.command === "digest" && options.format === "jsonl" && options.pretty) {
+    throw new Error("digest --format jsonl does not support --pretty");
   }
   if (options.command === "verify" && options.format !== undefined && options.format !== "json") {
     throw new Error("verify only supports --format json");
+  }
+  if (options.command === "verify" && options.format !== "json" && options.pretty) {
+    throw new Error("verify does not support --pretty without --format json");
   }
 
   return options;
@@ -289,7 +263,7 @@ function isViewCommand(command: CliOptions["command"]): boolean {
 }
 
 function parseFormat(value: string): Format {
-  if (value === "json" || value === "jsonl" || value === "blockpatch") {
+  if (value === "json" || value === "jsonl") {
     return value;
   }
   throw new Error(`unknown format: ${value}`);
@@ -304,7 +278,6 @@ Usage:
   blockcommit identity [commit] [--cwd <repo>]
   blockcommit identity-from [commit] [--cwd <repo>]
   blockcommit identity-to [commit] [--cwd <repo>]
-  blockcommit digest [commit] --format blockpatch [--strict]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
   blockcommit verify digest.json --cwd <repo>
@@ -328,8 +301,6 @@ Commands:
 Formats:
   json        full line-move digest (canonical)
   jsonl       one canonical digest JSON record per line, for digest ranges
-  blockpatch  rendered blockpatch documents for directly representable blocks
-              (--strict exits nonzero unless every block is rendered)
 `);
 }
 

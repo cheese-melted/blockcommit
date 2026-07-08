@@ -46,8 +46,6 @@ blockcommit content HEAD                    # compact content-op view
 blockcommit identity HEAD                   # pairwise file-identity flow
 blockcommit identity-from HEAD              # where old file content moved
 blockcommit identity-to HEAD                # where new file content came from
-blockcommit digest HEAD --format blockpatch # blockpatch rendering
-blockcommit digest HEAD --format blockpatch --strict
 blockcommit digest --range v1.0..main --format jsonl
 blockcommit verify HEAD                     # round-trip check one commit
 blockcommit verify HEAD --format json
@@ -60,7 +58,7 @@ blockcommit verify --range v1.0..main       # round-trip check a whole range
 
 `content [commit] [--cwd <repo>]`, `identity [commit] [--cwd <repo>]`, `identity-from [commit] [--cwd <repo>]`, and `identity-to [commit] [--cwd <repo>]` are readable views over that digest. `content` prints the block-operation layer. `identity` prints the raw pairwise path-flow layer. `identity-from` groups by old file, and `identity-to` groups by new file.
 
-`digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line. `digest --format blockpatch` prints a derived `.blockpatch` rendering for blocks the current `blockpatch` format can represent directly; blocks that cannot be rendered remain JSON-only with an `unsupported` reason, and a summary of omitted blocks is printed to stderr. Add `--strict` to exit nonzero instead of emitting an incomplete blockpatch stream.
+`digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line.
 
 `verify [commit]` rebuilds every represented changed file from its parent-commit content plus the digest blocks and byte-compares the result against what the commit actually contains. Files that cannot be represented as line blocks are still checked for explicit unsupported metadata. `verify digest.json --cwd <repo>` recomputes the digest for the referenced commit and fails if algorithm metadata, payload encodings, hashes, spans, file facts, block facts, or identity events do not match. Saved digests do not store local checkout paths, so `--cwd` is required when verifying a JSON file. When an argument names both an existing file and a resolvable commit (a stray file named `main`, say), the commit wins; the argument is only read as a saved digest when it does not resolve as a commit. Add `--format json` to return the structured `VerifyResult` instead of human-readable lines. `verify --range <rev-range>` verifies every non-merge commit `git rev-list` produces for the range.
 
@@ -130,7 +128,7 @@ Coordinate semantics, since consumers will otherwise guess: `src` spans use **pa
       "binary": false,
       "old_lines": 3, "new_lines": 1,
       "old_sha256": "…", "new_sha256": "…",
-      "line_digest_status": "represented" }   // or "partial" / "unsupported"
+      "line_digest_status": "represented" }   // or "unsupported"
   ],
   "blocks": [
     {
@@ -154,9 +152,7 @@ For represented files, every changed line of the commit appears in exactly one b
 
 When several exact block candidates compete, the matcher uses internal tie-breaks rather than public per-block metadata: prefer more lines, then more bytes, add a small bonus when the source/destination path pair already has dominant identity evidence, and sort by path/line coordinates as a deterministic final tie-break. That scoring is not part of the canonical digest because it is an implementation detail, not a consumer contract.
 
-When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` or `"partial"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Agents should treat those entries as explicit "known unknowns" rather than infer from missing blocks.
-
-The published JSON Schema describes the canonical digest only; blockpatch document text is derived output from `--format blockpatch`, not cached inside JSON digests.
+When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Mode changes are already captured by `old_mode` and `new_mode`; a mode-only change is unsupported because there are no line blocks to emit, while a mode-plus-content change remains `represented` when the content bytes are fully modeled.
 
 ## Content view
 
@@ -219,7 +215,7 @@ An event is emitted when a strict majority of a file's parent-image lines moved 
 
 - **Binary files** (NUL byte in the first 8000 bytes, or files git itself reports as binary) are not represented as line blocks. The file entry includes modes, object IDs, content hashes when blob bytes are available, and `unsupported_reason: "binary"`.
 - **Merge commits** are rejected (`verify --range` skips them); the digest is defined against exactly one parent. Root commits diff against the empty tree.
-- **Submodule pointer changes**, mode-only changes, and file-type changes are represented at file level with unsupported metadata. Symlink content changes digest the link target as blob content when the file type itself does not change.
+- **Submodule pointer changes**, mode-only changes, and file-type changes are represented at file level with unsupported metadata. Mode-plus-content changes keep `line_digest_status: "represented"` when the content bytes are fully modeled. Symlink content changes digest the link target as blob content when the file type itself does not change.
 
 ## Development and release checks
 

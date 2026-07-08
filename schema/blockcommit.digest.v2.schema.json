@@ -234,7 +234,7 @@
           ]
         },
         "line_digest_status": {
-          "enum": ["represented", "partial", "unsupported"]
+          "enum": ["represented", "unsupported"]
         },
         "unsupported_reason": {
           "enum": ["binary", "mode_only", "submodule", "filetype", "unparsed_diff"]
@@ -250,7 +250,7 @@
         },
         {
           "if": {
-            "properties": { "line_digest_status": { "enum": ["partial", "unsupported"] } },
+            "properties": { "line_digest_status": { "const": "unsupported" } },
             "required": ["line_digest_status"]
           },
           "then": { "required": ["unsupported_reason"] }

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { lineId, renderBlockPatch, type BlockPatchRenderResult, type BlockPatchRendering, type RenderContext } from "./blockpatch";
 import { getCommitInfo, readChangedFilePairs, type CommitInfo, type FilePair } from "./git";
 import { deriveIdentity } from "./identity";
 import {
@@ -57,11 +56,6 @@ interface BlockDraft {
   srcLines: LineRecord[] | null;
   dstLines: LineRecord[] | null;
   pairedLines?: PairedLine[];
-  targetInsertBeforeLine?: number;
-}
-
-export interface BlockPatchDocument extends BlockPatchRenderResult {
-  id: string;
 }
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -79,7 +73,6 @@ export interface FileState {
 export interface DigestComputation {
   digest: BlockCommitDigest;
   fileStates: Map<string, FileState>;
-  blockpatches: BlockPatchDocument[];
 }
 
 export function digestCommit(options: DigestOptions = {}): BlockCommitDigest {
@@ -93,9 +86,6 @@ export function computeDigest(options: DigestOptions = {}): DigestComputation {
 
 export function computeDigestFor(info: CommitInfo): DigestComputation {
   const pairs = readChangedFilePairs(info);
-  const oldLinesByPath = new Map<string, LineRecord[]>();
-  const oldExists = new Set<string>();
-  const newExists = new Set<string>();
   const fileStates = new Map<string, FileState>();
   const fileDigests: ChangedFileDigest[] = [];
   const removed: RemovedLine[] = [];
@@ -111,20 +101,13 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     countLineOccurrences(lineOccurrences.old, oldLines);
     countLineOccurrences(lineOccurrences.new, newLines);
     const status = classifyFile(pair, binary, oldBytes, newBytes);
-    const shouldParseLines = status.reason === undefined || status.reason === "mode_only";
+    const shouldParseLines = status.reason === undefined;
     const parsed = shouldParseLines
       ? parseChangedLines(pair, oldLines, newLines)
       : emptyParsedChanges();
     const finalStatus = finalizeFileStatus(status, parsed, oldBytes, newBytes, oldLines, newLines);
 
-    oldLinesByPath.set(pair.path, oldLines);
     fileStates.set(pair.path, { oldLines, newBytes: pair.newBytes });
-    if (pair.oldExists) {
-      oldExists.add(pair.path);
-    }
-    if (pair.newExists) {
-      newExists.add(pair.path);
-    }
     fileDigests.push({
       path: pair.path,
       old_exists: pair.oldExists,
@@ -142,7 +125,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
       ...(finalStatus.reason === undefined ? {} : { unsupported_reason: finalStatus.reason })
     });
 
-    if (finalStatus.lineDigestStatus === "represented" || finalStatus.lineDigestStatus === "partial") {
+    if (finalStatus.lineDigestStatus === "represented") {
       removed.push(...parsed.removed);
       added.push(...parsed.added);
     }
@@ -161,15 +144,8 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     )
   ];
 
-  const renderContext: RenderContext = {
-    oldLinesByPath,
-    oldExists,
-    newExists,
-    removedLineIds: new Set(removed.map((line) => lineId(line.line.path, line.line.lineNo)))
-  };
-  const builtBlocks = drafts.map((draft) => buildBlock(draft, renderContext));
+  const builtBlocks = drafts.map((draft) => buildBlock(draft));
   const blocks = builtBlocks.map((built) => built.block);
-  const blockpatches = builtBlocks.map((built) => built.blockpatch);
 
   const digest: BlockCommitDigest = {
     schema_version: schemaVersion,
@@ -188,7 +164,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     }
   };
 
-  return { digest, fileStates, blockpatches };
+  return { digest, fileStates };
 }
 
 interface InitialFileStatus {
@@ -221,9 +197,6 @@ function classifyFile(pair: FilePair, binary: boolean, oldBytes: Buffer, newByte
   if (modeChanged && buffersEqual(oldBytes, newBytes)) {
     return { reason: "mode_only" };
   }
-  if (modeChanged) {
-    return { reason: "mode_only" };
-  }
   return {};
 }
 
@@ -246,10 +219,6 @@ function finalizeFileStatus(
 
   if (initial.reason === undefined) {
     return { lineDigestStatus: "represented" };
-  }
-
-  if (initial.reason === "mode_only" && !buffersEqual(oldBytes, newBytes)) {
-    return { lineDigestStatus: "partial", reason: "mode_only" };
   }
 
   return { lineDigestStatus: "unsupported", reason: initial.reason };
@@ -341,8 +310,7 @@ function parseChangedLines(pair: FilePair, oldLines: LineRecord[], newLines: Lin
 // A line may only anchor if it carries enough alphanumeric content to
 // plausibly have an identity of its own (compare git's --color-moved
 // MIN_ALNUM_COUNT); blank lines and lone braces can join a block through
-// extension but never start one. Whole-file binary records are exempt:
-// exact byte equality of an entire file is strong evidence on its own.
+// extension but never start one.
 function pairLines(
   removed: RemovedLine[],
   added: AddedLine[],
@@ -391,9 +359,6 @@ const nonAsciiAlnum = /[\p{L}\p{N}]/u;
 // Memoized on the record: pairLines re-anchors until it reaches a fixed
 // point, and this check dominated digest time when recomputed per round.
 function canAnchor(line: LineRecord): boolean {
-  if (line.atomic === true) {
-    return true;
-  }
   line.anchorEligible ??= hasAnchorContent(line.key);
   return line.anchorEligible;
 }
@@ -816,8 +781,7 @@ function groupPairedLines(paired: PairedLine[]): BlockDraft[] {
   return groups.map((group) => ({
     srcLines: group.map((line) => line.src.line),
     dstLines: group.map((line) => line.dst.line),
-    pairedLines: group,
-    targetInsertBeforeLine: group[0].dst.insertBeforeLine
+    pairedLines: group
   }));
 }
 
@@ -842,8 +806,7 @@ function groupOneSidedLines(lines: AddedLine[] | RemovedLine[], kind: "added" | 
       const added = group as AddedLine[];
       return {
         srcLines: null,
-        dstLines: added.map((line) => line.line),
-        targetInsertBeforeLine: added[0].insertBeforeLine
+        dstLines: added.map((line) => line.line)
       };
     }
     return {
@@ -881,12 +844,15 @@ function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-interface BuiltBlock {
-  block: LineMoveBlock;
-  blockpatch: BlockPatchDocument;
+function lineId(path: string, lineNo: number): string {
+  return `${path}\0${lineNo}`;
 }
 
-function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
+interface BuiltBlock {
+  block: LineMoveBlock;
+}
+
+function buildBlock(draft: BlockDraft): BuiltBlock {
   const srcLines = draft.srcLines;
   const dstLines = draft.dstLines;
   const payload = srcLines !== null ? concatLineBytes(srcLines) : concatLineBytes(dstLines ?? []);
@@ -895,13 +861,6 @@ function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
   const src = srcLines === null ? null : spanForLines(srcLines);
   const dst = dstLines === null ? null : spanForLines(dstLines);
   const id = stableBlockId(kind, src, dst, hash);
-  const renderedBlockpatch = safeRenderBlockPatch({
-    id,
-    srcLines,
-    dstLines,
-    payload,
-    targetInsertBeforeLine: draft.targetInsertBeforeLine
-  }, context);
   const encoded = encodePayload(payload);
   const base = {
     id,
@@ -917,16 +876,7 @@ function buildBlock(draft: BlockDraft, context: RenderContext): BuiltBlock {
       ? { ...base, kind, src: null, dst: dst! }
       : { ...base, kind, src: src!, dst: null };
 
-  return {
-    block,
-    blockpatch: { id, ...renderedBlockpatch }
-  };
-}
-
-function canonicalBlockpatch(result: BlockPatchRenderResult): BlockPatchRendering {
-  return result.reason === undefined
-    ? { status: result.status }
-    : { status: result.status, reason: result.reason };
+  return { block };
 }
 
 function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | null, payloadSha: string): string {
@@ -940,24 +890,6 @@ function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | nu
     .update(payloadSha)
     .digest("hex");
   return `bc_${hash.slice(0, 16)}`;
-}
-
-function safeRenderBlockPatch(
-  block: {
-    id: string;
-    srcLines: LineRecord[] | null;
-    dstLines: LineRecord[] | null;
-    payload: Buffer;
-    targetInsertBeforeLine?: number;
-  },
-  context: RenderContext
-): BlockPatchRenderResult {
-  try {
-    return renderBlockPatch(block, context);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { status: "unsupported", reason: message };
-  }
 }
 
 function compareLineRecords(left: LineRecord, right: LineRecord): number {

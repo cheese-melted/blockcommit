@@ -14,7 +14,7 @@ export const digestAlgorithm = {
 
 export type BlockKind = "move" | "insert" | "delete";
 export type PayloadEncoding = "utf-8" | "base64";
-export type LineDigestStatus = "represented" | "partial" | "unsupported";
+export type LineDigestStatus = "represented" | "unsupported";
 export type UnsupportedReason = "binary" | "mode_only" | "submodule" | "filetype" | "unparsed_diff";
 
 export interface LineSpan {
