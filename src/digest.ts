@@ -48,6 +48,11 @@ interface PairedLine {
   match: MatchMetadata;
 }
 
+interface LineOccurrenceCounts {
+  old: Map<string, number>;
+  new: Map<string, number>;
+}
+
 interface BlockDraft {
   srcLines: LineRecord[] | null;
   dstLines: LineRecord[] | null;
@@ -95,6 +100,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
   const fileDigests: ChangedFileDigest[] = [];
   const removed: RemovedLine[] = [];
   const added: AddedLine[] = [];
+  const lineOccurrences: LineOccurrenceCounts = { old: new Map(), new: new Map() };
 
   for (const pair of pairs) {
     const oldBytes = pair.oldBytes ?? Buffer.alloc(0);
@@ -102,6 +108,8 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     const binary = pair.gitBinary || isBinary(oldBytes) || isBinary(newBytes);
     const oldLines = splitLineRecords(pair.path, oldBytes);
     const newLines = splitLineRecords(pair.path, newBytes);
+    countLineOccurrences(lineOccurrences.old, oldLines);
+    countLineOccurrences(lineOccurrences.new, newLines);
     const status = classifyFile(pair, binary, oldBytes, newBytes);
     const shouldParseLines = status.reason === undefined || status.reason === "mode_only";
     const parsed = shouldParseLines
@@ -140,7 +148,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     }
   }
 
-  const paired = pairLines(removed, added, fileDigests);
+  const paired = pairLines(removed, added, fileDigests, lineOccurrences);
   const drafts = [
     ...groupPairedLines(paired),
     ...groupOneSidedLines(
@@ -258,6 +266,12 @@ function buffersEqual(left: Buffer, right: Buffer): boolean {
   return left.length === right.length && left.equals(right);
 }
 
+function countLineOccurrences(counts: Map<string, number>, lines: LineRecord[]): void {
+  for (const line of lines) {
+    counts.set(line.key, (counts.get(line.key) ?? 0) + 1);
+  }
+}
+
 function parseChangedLines(pair: FilePair, oldLines: LineRecord[], newLines: LineRecord[]): ParsedChanges {
   const removed: RemovedLine[] = [];
   const added: AddedLine[] = [];
@@ -319,19 +333,25 @@ function parseChangedLines(pair: FilePair, oldLines: LineRecord[], newLines: Lin
   return { removed, added, sawHunk };
 }
 
-// Pairs removed and added lines patience-style: lines whose content is unique
-// on both sides anchor a pairing, then each anchor extends through adjacent
-// lines with equal content so non-unique neighbors (blank lines, braces) join
-// a block only when its context carries them. Anchoring repeats on the
-// leftovers until no unique content remains, so coincidentally identical
-// trivial lines never pair into phantom moves.
+// Pairs removed and added lines in identity-preserving stages: whole-file
+// identity first, then snapshot-unique anchors, then exact leftovers supported
+// by dominant path identity, and finally conservative exact block fallback.
+// Anchors extend through adjacent lines with equal content so non-unique
+// neighbors (blank lines, braces) join a block only when its context carries
+// them. Anchoring repeats on the leftovers until no unique content remains, so
+// coincidentally identical trivial lines never pair into phantom moves.
 //
 // A line may only anchor if it carries enough alphanumeric content to
 // plausibly have an identity of its own (compare git's --color-moved
 // MIN_ALNUM_COUNT); blank lines and lone braces can join a block through
 // extension but never start one. Whole-file binary records are exempt:
 // exact byte equality of an entire file is strong evidence on its own.
-function pairLines(removed: RemovedLine[], added: AddedLine[], files: ChangedFileDigest[]): PairedLine[] {
+function pairLines(
+  removed: RemovedLine[],
+  added: AddedLine[],
+  files: ChangedFileDigest[],
+  lineOccurrences: LineOccurrenceCounts
+): PairedLine[] {
   const paired: PairedLine[] = [];
   const removedByPos = new Map<string, RemovedLine>();
   const addedByPos = new Map<string, AddedLine>();
@@ -346,7 +366,7 @@ function pairLines(removed: RemovedLine[], added: AddedLine[], files: ChangedFil
 
   while (true) {
     const before = paired.length;
-    const anchors = uniqueContentAnchors(removed, added);
+    const anchors = uniqueContentAnchors(removed, added, lineOccurrences);
     if (anchors.length === 0) {
       break;
     }
@@ -404,10 +424,14 @@ function hasAnchorContent(key: string): boolean {
   return false;
 }
 
-function uniqueContentAnchors(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
+function uniqueContentAnchors(
+  removed: RemovedLine[],
+  added: AddedLine[],
+  lineOccurrences: LineOccurrenceCounts
+): PairedLine[] {
   const srcByKey = new Map<string, RemovedLine | null>();
   for (const line of removed) {
-    if (line.paired !== undefined || !canAnchor(line.line)) {
+    if (line.paired !== undefined || !canAnchor(line.line) || !isSnapshotUnique(line.line, lineOccurrences.old)) {
       continue;
     }
     srcByKey.set(line.line.key, srcByKey.has(line.line.key) ? null : line);
@@ -415,7 +439,7 @@ function uniqueContentAnchors(removed: RemovedLine[], added: AddedLine[]): Paire
 
   const dstByKey = new Map<string, AddedLine | null>();
   for (const line of added) {
-    if (line.paired !== undefined || !canAnchor(line.line)) {
+    if (line.paired !== undefined || !canAnchor(line.line) || !isSnapshotUnique(line.line, lineOccurrences.new)) {
       continue;
     }
     dstByKey.set(line.line.key, dstByKey.has(line.line.key) ? null : line);
@@ -433,6 +457,10 @@ function uniqueContentAnchors(removed: RemovedLine[], added: AddedLine[]): Paire
     anchors.push({ src, dst, match: defaultMatchMetadata() });
   }
   return anchors;
+}
+
+function isSnapshotUnique(line: LineRecord, counts: Map<string, number>): boolean {
+  return (counts.get(line.key) ?? 0) === 1;
 }
 
 function extendPairing(

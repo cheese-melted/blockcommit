@@ -283,6 +283,52 @@ describe("digestCommit", () => {
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
+  test("uses dominant path identity to pair exact leftover blocks", () => {
+    const repo = makeRepo();
+    writeFileSync(
+      join(repo, "a.txt"),
+      "alpha unique()\nx=1\ny=2\nz=3\nbeta unique()\nstay put()\n"
+    );
+    commitAll(repo, "base");
+
+    writeFileSync(join(repo, "a.txt"), "stay put()\n");
+    writeFileSync(
+      join(repo, "b.txt"),
+      "alpha unique()\nbeta unique()\nx=1\ny=2\nz=3\n"
+    );
+    const commit = commitAll(repo, "move dominant path with reordered short block");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    const shortBlock = digest.blocks.find((block) => block.kind === "move" && block.payload_text === "x=1\ny=2\nz=3\n");
+    expect(shortBlock).toMatchObject({
+      src: { path: "a.txt", start_line: 2, end_line: 4 },
+      dst: { path: "b.txt", start_line: 3, end_line: 5 },
+      match: {
+        chosen_by: "dominant_path_identity",
+        confidence: "strong",
+        ambiguous: false
+      }
+    });
+    expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
+  });
+
+  test("leaves weak one-line duplicate leftovers as insert and delete blocks", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.txt"), "alpha()\ncommon call\nleft only\n");
+    writeFileSync(join(repo, "b.txt"), "beta()\ncommon call\n");
+    commitAll(repo, "base");
+
+    writeFileSync(join(repo, "a.txt"), "alpha()\nleft only\n");
+    writeFileSync(join(repo, "b.txt"), "beta()\ncommon call\ncommon call\n");
+    const commit = commitAll(repo, "shuffle common one line");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(digest.summary.moves).toBe(0);
+    expect(digest.summary.insertions).toBe(1);
+    expect(digest.summary.deletions).toBe(1);
+    expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
+  });
+
   test("records chmod-only changes as unsupported file metadata with no line blocks", () => {
     const repo = makeRepo();
     git(repo, ["config", "core.filemode", "true"]);

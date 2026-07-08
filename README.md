@@ -66,10 +66,11 @@ blockcommit verify --range v1.0..main       # round-trip check a whole range
 Pairing is identity-preserving and deterministic:
 
 1. Exact whole-file identity moves are locked first when a removed file's full payload appears as a new file's full payload. This covers ordinary renames and path reuse before line-level pairing can fragment them.
-2. A removed line and an added line whose content is **unique** among the commit's unpaired changed lines anchor a pairing.
+2. A removed line and an added line whose content is **unique** in the old and new snapshots anchor a pairing.
 3. Each anchor **extends** through adjacent lines with equal content, so non-unique neighbors (blank lines, lone braces) join a moved block when its context carries them.
 4. Anchoring repeats on the leftovers until no unique content remains.
-5. Remaining contiguous delete/insert groups with a unique exact payload match are paired as moves when the group has enough alphanumeric content across the whole payload. This recovers duplicate-only and short-line blocks without pairing blank/brace-only noise.
+5. When most of an old path's changed content appears in one destination path, exact leftover blocks for that path pair are paired with `dominant_path_identity` metadata.
+6. Remaining contiguous delete/insert groups with a unique exact payload match are paired as moves only when doing so improves the objective. Multi-line exact blocks with enough alphanumeric content are kept; weak one-line common leftovers are left as honest delete/insert blocks.
 
 A line may only *anchor* a pairing if it carries enough alphanumeric content to plausibly have an identity of its own (compare git's `--color-moved` heuristics). This keeps coincidentally identical trivial lines — a blank line deleted here, an unrelated blank line added there — from pairing into phantom moves. In practice this also minimizes the op count: pairing trivial lines would shatter contiguous insert/delete blocks into many fragments.
 
