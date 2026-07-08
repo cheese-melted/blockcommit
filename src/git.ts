@@ -37,7 +37,8 @@ interface RawEntry {
 }
 
 export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
-  const repo = gitText(cwd, ["rev-parse", "--show-toplevel"]).trim();
+  const repo = resolve(gitText(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  assertSha1ObjectFormat(repo);
   const commit = gitText(repo, ["rev-parse", "--verify", `${commitish}^{commit}`]).trim();
   const revLine = gitText(repo, ["rev-list", "--parents", "-n", "1", commit]).trim();
   const [, ...parents] = revLine.split(/\s+/);
@@ -47,7 +48,7 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
   }
 
   return {
-    repo: resolve(repo),
+    repo,
     commit,
     parent: parents[0] ?? null,
     diffBase: parents[0] ?? emptyTree
@@ -66,6 +67,7 @@ export function tryResolveCommit(cwd: string, commitish: string): string | null 
 // range walks don't pay per-commit rev-parse/rev-list spawns.
 export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
   const repo = resolve(gitText(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  assertSha1ObjectFormat(repo);
   return gitText(repo, ["rev-list", "--no-merges", "--reverse", "--parents", range])
     .split("\n")
     .map((line) => line.trim())
@@ -74,6 +76,13 @@ export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
       const [commit, ...parents] = line.split(/\s+/);
       return { repo, commit, parent: parents[0] ?? null, diffBase: parents[0] ?? emptyTree };
     });
+}
+
+function assertSha1ObjectFormat(repo: string): void {
+  const objectFormat = gitText(repo, ["rev-parse", "--show-object-format"]).trim();
+  if (objectFormat !== "sha1") {
+    throw new Error(`blockcommit digest v3 only supports sha1 Git object format, got ${objectFormat}`);
+  }
 }
 
 export function listCommits(cwd: string, range: string): string[] {

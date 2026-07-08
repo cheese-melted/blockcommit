@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { computeDigestFor, digestCommit } from "./digest";
 import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
 import { renderContent } from "./content";
+import { couplingPayload } from "./coupling";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
@@ -11,7 +12,7 @@ import { type BlockCommitDigest, type VerifyResult } from "./types";
 type Format = "json" | "jsonl";
 
 interface CliOptions {
-  command: "digest" | "content" | "identity" | "identity-from" | "identity-to" | "verify" | "help";
+  command: "digest" | "content" | "identity" | "identity-from" | "identity-to" | "coupling" | "verify" | "help";
   commit: string;
   cwd?: string;
   format?: Format;
@@ -28,6 +29,9 @@ async function main(argv: string[]): Promise<number> {
 
   if (options.command === "verify") {
     return runVerify(options);
+  }
+  if (options.command === "coupling") {
+    return runCoupling(options);
   }
   if (options.command === "content") {
     const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
@@ -63,6 +67,29 @@ async function main(argv: string[]): Promise<number> {
 
   process.stdout.write(JSON.stringify(digest, null, options.pretty ? 2 : 0));
   process.stdout.write("\n");
+  return 0;
+}
+
+function runCoupling(options: CliOptions): number {
+  if (options.range !== undefined) {
+    return runCouplingRange(options);
+  }
+
+  const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+  process.stdout.write(JSON.stringify(couplingPayload(digest), null, options.pretty ? 2 : 0));
+  process.stdout.write("\n");
+  return 0;
+}
+
+function runCouplingRange(options: CliOptions): number {
+  const format = options.format ?? "jsonl";
+  if (format !== "jsonl") {
+    throw new Error("coupling --range only supports --format jsonl");
+  }
+  for (const info of listCommitInfos(options.cwd ?? process.cwd(), options.range!)) {
+    process.stdout.write(JSON.stringify(couplingPayload(computeDigestFor(info).digest)));
+    process.stdout.write("\n");
+  }
   return 0;
 }
 
@@ -167,6 +194,7 @@ function parseArgs(argv: string[]): CliOptions {
     first !== "identity" &&
     first !== "identity-from" &&
     first !== "identity-to" &&
+    first !== "coupling" &&
     first !== "verify"
   ) {
     throw new Error(`unknown command: ${first}`);
@@ -237,6 +265,12 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.command === "digest" && options.format === "jsonl" && options.pretty) {
     throw new Error("digest --format jsonl does not support --pretty");
   }
+  if (options.command === "coupling" && options.range !== undefined && options.pretty) {
+    throw new Error("coupling --range does not support --pretty");
+  }
+  if (options.command === "coupling" && options.format === "jsonl" && options.pretty) {
+    throw new Error("coupling --format jsonl does not support --pretty");
+  }
   if (options.command === "verify" && options.format !== undefined && options.format !== "json") {
     throw new Error("verify only supports --format json");
   }
@@ -278,6 +312,8 @@ Usage:
   blockcommit identity [commit] [--cwd <repo>]
   blockcommit identity-from [commit] [--cwd <repo>] [--pretty]
   blockcommit identity-to [commit] [--cwd <repo>] [--pretty]
+  blockcommit coupling [commit] [--cwd <repo>] [--pretty]
+  blockcommit coupling --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
   blockcommit verify digest.json --cwd <repo>
@@ -292,6 +328,7 @@ Commands:
             emit where old file content moved
   identity-to
             emit where new file content came from
+  coupling  emit ordered symbols/ops JSON for VPEL relation mapping
   verify    rebuild each changed file from parent + digest blocks and
             byte-compare against the commit; --range walks a rev-list
             (merges skipped) and verifies every commit in it. Passing

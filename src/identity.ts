@@ -22,7 +22,7 @@ interface DestinationAggregate {
 //
 // confidence is "exact" only when every old line of the file moved to the
 // destination and every line of the destination's post-image came from it;
-// anything looser is "partial" with coverage ratios.
+// anything looser is "partial".
 export function deriveIdentity(files: ChangedFileDigest[], blocks: LineMoveBlock[]): IdentityEvent[] {
   const destinationsBySrc = new Map<string, Map<string, DestinationAggregate>>();
   for (const block of blocks) {
@@ -70,8 +70,6 @@ export function deriveIdentity(files: ChangedFileDigest[], blocks: LineMoveBlock
 
     const destination = filesByPath.get(dominant.path);
     const destinationLines = destination?.new_lines ?? 0;
-    const movedFraction = ratio(dominant.lines, file.old_lines);
-    const arrivedFraction = ratio(dominant.lines, destinationLines);
     const exact = dominant.lines === file.old_lines && dominant.lines === destinationLines;
 
     events.push({
@@ -89,22 +87,9 @@ export function deriveIdentity(files: ChangedFileDigest[], blocks: LineMoveBlock
       new_identity: file.new_exists
         ? { path: file.path, lines: file.new_lines, sha256: file.new_sha256 }
         : null,
-      confidence: exact ? "exact" : "partial",
-      coverage: {
-        old_file_lines_moved: movedFraction,
-        new_file_lines_from_old: arrivedFraction
-      }
+      confidence: exact ? "exact" : "partial"
     });
   }
 
   return events;
-}
-
-// Floored to two decimals so a near-complete move never rounds up to a
-// coverage of 1 while the confidence says partial.
-function ratio(numerator: number, denominator: number): number {
-  if (denominator === 0) {
-    return 0;
-  }
-  return Math.floor((numerator / denominator) * 100) / 100;
 }

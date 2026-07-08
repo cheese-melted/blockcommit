@@ -1,5 +1,5 @@
 export const nullPath = "/dev/null";
-export const schemaVersion = "blockcommit.digest.v2";
+export const schemaVersion = "blockcommit.digest.v3";
 export const digestAlgorithm = {
   name: "exact-line-sha256-identity-preserving",
   version: 2,
@@ -90,18 +90,12 @@ export interface IdentityMove {
   blocks: string[];
 }
 
-export interface IdentityCoverage {
-  old_file_lines_moved: number;
-  new_file_lines_from_old: number;
-}
-
 export interface IdentityEvent {
   kind: IdentityKind;
   old_identity: IdentityEndpoint;
   moved_to: IdentityMove;
   new_identity: IdentityEndpoint | null;
   confidence: IdentityConfidence;
-  coverage: IdentityCoverage;
 }
 
 export interface BlockCommitSummary {

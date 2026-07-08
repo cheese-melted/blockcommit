@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
 import { renderContent } from "../src/content";
+import { couplingPayload } from "../src/coupling";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "../src/identity-view";
@@ -51,7 +52,7 @@ describe("digestCommit", () => {
     const commit = commitAll(repo, "move one line");
 
     const digest = digestCommit({ cwd: repo, commit });
-    expect(digest.schema_version).toBe("blockcommit.digest.v2");
+    expect(digest.schema_version).toBe("blockcommit.digest.v3");
     expect(JSON.parse(JSON.stringify(digest))).not.toHaveProperty("repo");
     expect(digest.algorithm).toEqual({
       name: "exact-line-sha256-identity-preserving",
@@ -95,6 +96,16 @@ describe("digestCommit", () => {
     expect(JSON.stringify(digestCommit({ cwd: repo, commit }))).toBe(
       JSON.stringify(digestCommit({ cwd: clone, commit }))
     );
+  });
+
+  test("rejects SHA-256-format Git repositories", () => {
+    const repo = mkdtempSync(join(tmpdir(), "blockcommit-sha256-"));
+    const init = spawnSync("git", ["init", "--object-format=sha256"], { cwd: repo, encoding: "utf8" });
+    if (init.status !== 0) {
+      return;
+    }
+
+    expect(() => digestCommit({ cwd: repo })).toThrow(/only supports sha1 Git object format/);
   });
 
   test("groups a delete/add rename into one moved block", () => {
@@ -524,14 +535,26 @@ describe("identity", () => {
       old_identity: { path: "a.ts", lines: 3 },
       moved_to: { path: "b.ts", lines_moved: 3 },
       new_identity: { path: "a.ts", lines: 2 },
-      confidence: "exact",
-      coverage: { old_file_lines_moved: 1, new_file_lines_from_old: 1 }
+      confidence: "exact"
     });
 
     const oldA = digest.files.find((file) => file.path === "a.ts");
     const newB = digest.files.find((file) => file.path === "b.ts");
     expect(oldA?.old_sha256).toBe(newB?.new_sha256 ?? "");
     expect(digest.identity[0].old_identity.sha256).toBe(oldA?.old_sha256 ?? "");
+    expect(couplingPayload(digest)).toMatchObject({
+      commit,
+      parent: expect.any(String),
+      symbols: {
+        s1: "a.ts",
+        s2: "b.ts",
+        s3: "a.ts"
+      },
+      ops: [
+        ["move", "s1", "s2", 3, 3, 3],
+        ["insert", null, "s3", 2, 0, 2]
+      ]
+    });
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -555,7 +578,7 @@ describe("identity", () => {
     });
   });
 
-  test("reports partial confidence with coverage when a move is not whole-file", () => {
+  test("reports partial confidence when a move is not whole-file", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "a.ts"), "moved one()\nmoved two()\nmoved three()\nstays behind()\n");
     commitAll(repo, "base");
@@ -568,8 +591,10 @@ describe("identity", () => {
     expect(digest.identity).toHaveLength(1);
     expect(digest.identity[0]).toMatchObject({
       kind: "renamed",
-      confidence: "partial",
-      coverage: { old_file_lines_moved: 0.75, new_file_lines_from_old: 1 }
+      old_identity: { path: "a.ts", lines: 4 },
+      moved_to: { path: "b.ts", lines_moved: 3 },
+      new_identity: null,
+      confidence: "partial"
     });
     expect(renderIdentity(digest)).toBe("a.ts:4 -> b.ts:3 (3)\n");
   });
@@ -769,6 +794,48 @@ describe("cli", () => {
 
   });
 
+  test("prints ordered coupling payloads", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.ts"), "one()\ntwo()\n");
+    commitAll(repo, "base");
+
+    git(repo, ["rm", "a.ts"]);
+    writeFileSync(join(repo, "b.ts"), "one()\ntwo()\n");
+    const commit = commitAll(repo, "move a to b");
+
+    const result = cli(["coupling", commit, "--cwd", repo]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      commit,
+      symbols: {
+        s1: "a.ts",
+        s2: "b.ts"
+      },
+      ops: [["move", "s1", "s2", 2, 2, 2]]
+    });
+
+    const pretty = cli(["coupling", commit, "--cwd", repo, "--pretty"]);
+    expect(pretty.status).toBe(0);
+    expect(pretty.stdout).toContain("\n  \"ops\": [\n");
+  });
+
+  test("prints coupling ranges as JSONL", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+
+    const result = cli(["coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
+    expect(result.status).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      commit: second,
+      ops: [["insert", null, "s1", 1, 0, 2]]
+    });
+  });
+
   test("prints canonical digest ranges as JSONL", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "one\n");
@@ -782,7 +849,7 @@ describe("cli", () => {
     expect(lines).toHaveLength(1);
     const digest = JSON.parse(lines[0]);
     expect(digest.commit).toBe(second);
-    expect(digest.schema_version).toBe("blockcommit.digest.v2");
+    expect(digest.schema_version).toBe("blockcommit.digest.v3");
   });
 
   test("reports bad commits and unknown options", () => {
@@ -821,6 +888,14 @@ describe("cli", () => {
     const digestJsonl = cli(["digest", second, "--cwd", repo, "--format", "jsonl", "--pretty"]);
     expect(digestJsonl.status).toBe(1);
     expect(digestJsonl.stderr).toContain("digest --format jsonl does not support --pretty");
+
+    const couplingRange = cli(["coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    expect(couplingRange.status).toBe(1);
+    expect(couplingRange.stderr).toContain("coupling --range does not support --pretty");
+
+    const couplingJsonl = cli(["coupling", second, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    expect(couplingJsonl.status).toBe(1);
+    expect(couplingJsonl.stderr).toContain("coupling --format jsonl does not support --pretty");
 
     const verify = cli(["verify", second, "--cwd", repo, "--pretty"]);
     expect(verify.status).toBe(1);
@@ -889,11 +964,11 @@ describe("cli", () => {
   });
 
   test("ships a JSON schema for the canonical digest", () => {
-    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v2.schema.json"), "utf8"));
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v3.schema.json"), "utf8"));
     expect(schema).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       properties: {
-        schema_version: { const: "blockcommit.digest.v2" },
+        schema_version: { const: "blockcommit.digest.v3" },
         algorithm: { $ref: "#/$defs/algorithm" }
       }
     });
@@ -903,7 +978,7 @@ describe("cli", () => {
 describe("digest schema", () => {
   test("generated digests validate against the shipped schema", () => {
     const schema = JSON.parse(
-      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v2.schema.json"), "utf8")
+      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v3.schema.json"), "utf8")
     );
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(schema);

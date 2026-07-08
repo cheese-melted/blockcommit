@@ -42,10 +42,7 @@ interface ParsedChanges {
 interface PairedLine {
   src: RemovedLine;
   dst: AddedLine;
-  chosenBy: PairingStage;
 }
-
-type PairingStage = "unique_anchor" | "whole_file_identity" | "dominant_path_identity" | "exact_block_fallback" | "unpaired";
 
 interface LineOccurrenceCounts {
   old: Map<string, number>;
@@ -55,7 +52,6 @@ interface LineOccurrenceCounts {
 interface BlockDraft {
   srcLines: LineRecord[] | null;
   dstLines: LineRecord[] | null;
-  pairedLines?: PairedLine[];
 }
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -339,7 +335,7 @@ function pairLines(
       if (anchor.src.paired !== undefined || anchor.dst.paired !== undefined) {
         continue;
       }
-      const pairedAnchor = pairUp(anchor.src, anchor.dst, paired, "unique_anchor");
+      const pairedAnchor = pairUp(anchor.src, anchor.dst, paired);
       extendPairing(pairedAnchor, 1, removedByPos, addedByPos, paired);
       extendPairing(pairedAnchor, -1, removedByPos, addedByPos, paired);
     }
@@ -415,7 +411,7 @@ function uniqueContentAnchors(
     if (dst === undefined || dst === null) {
       continue;
     }
-    anchors.push({ src, dst, chosenBy: "unique_anchor" });
+    anchors.push({ src, dst });
   }
   return anchors;
 }
@@ -446,21 +442,16 @@ function extendPairing(
     if (nextSrc.line.key !== nextDst.line.key) {
       return;
     }
-    pairUp(nextSrc, nextDst, paired, anchor.chosenBy);
+    pairUp(nextSrc, nextDst, paired);
     src = nextSrc.line;
     dst = nextDst.line;
   }
 }
 
-function pairUp(
-  src: RemovedLine,
-  dst: AddedLine,
-  paired: PairedLine[],
-  chosenBy: PairingStage = "unique_anchor"
-): PairedLine {
+function pairUp(src: RemovedLine, dst: AddedLine, paired: PairedLine[]): PairedLine {
   src.paired = dst;
   dst.paired = src;
-  const pair = { src, dst, chosenBy };
+  const pair = { src, dst };
   paired.push(pair);
   return pair;
 }
@@ -486,7 +477,7 @@ function pairWholeFileIdentityMoves(
       continue;
     }
     for (let index = 0; index < srcGroup.length; index += 1) {
-      pairUp(srcGroup[index], dstGroup[index] as AddedLine, paired, "whole_file_identity");
+      pairUp(srcGroup[index], dstGroup[index] as AddedLine, paired);
     }
   }
 }
@@ -518,7 +509,6 @@ function isCompleteNewFileGroup(group: AddedLine[], filesByPath: Map<string, Cha
 interface ExactBlockCandidate {
   srcGroup: RemovedLine[];
   dstGroup: AddedLine[];
-  chosenBy: PairingStage;
   score: number;
 }
 
@@ -549,7 +539,6 @@ function pairDominantPathIdentityBlocks(
       candidates.push({
         srcGroup,
         dstGroup,
-        chosenBy: "dominant_path_identity",
         score: exactBlockCandidateScore(srcGroup, dstGroup, true)
       });
     }
@@ -663,7 +652,6 @@ function pairExactUnmatchedBlocksByObjective(removed: RemovedLine[], added: Adde
     candidates.push({
       srcGroup,
       dstGroup,
-      chosenBy: "exact_block_fallback",
       score: exactBlockCandidateScore(srcGroup, dstGroup, false)
     });
   }
@@ -683,7 +671,7 @@ function pairExactBlockCandidates(candidates: ExactBlockCandidate[], paired: Pai
       continue;
     }
     for (let index = 0; index < candidate.srcGroup.length; index += 1) {
-      pairUp(candidate.srcGroup[index], candidate.dstGroup[index], paired, candidate.chosenBy);
+      pairUp(candidate.srcGroup[index], candidate.dstGroup[index], paired);
     }
   }
 }
@@ -780,8 +768,7 @@ function groupPairedLines(paired: PairedLine[]): BlockDraft[] {
 
   return groups.map((group) => ({
     srcLines: group.map((line) => line.src.line),
-    dstLines: group.map((line) => line.dst.line),
-    pairedLines: group
+    dstLines: group.map((line) => line.dst.line)
   }));
 }
 
@@ -893,7 +880,11 @@ function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | nu
 }
 
 function compareLineRecords(left: LineRecord, right: LineRecord): number {
-  return left.path.localeCompare(right.path) || left.lineNo - right.lineNo;
+  return comparePath(left.path, right.path) || left.lineNo - right.lineNo;
+}
+
+function comparePath(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function samePath(left: LineRecord, right: LineRecord): boolean {

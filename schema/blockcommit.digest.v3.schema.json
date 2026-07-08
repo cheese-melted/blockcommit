@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v2.schema.json",
-  "title": "blockcommit digest v2",
+  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v3.schema.json",
+  "title": "blockcommit digest v3",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "algorithm", "commit", "parent", "files", "blocks", "identity", "summary"],
   "properties": {
-    "schema_version": { "const": "blockcommit.digest.v2" },
+    "schema_version": { "const": "blockcommit.digest.v3" },
     "algorithm": { "$ref": "#/$defs/algorithm" },
     "commit": { "$ref": "#/$defs/gitOid" },
     "parent": {
@@ -49,11 +49,6 @@
     "positiveInteger": {
       "type": "integer",
       "minimum": 1
-    },
-    "ratio": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
     },
     "lineSpan": {
       "type": "object",
@@ -300,15 +295,6 @@
         }
       }
     },
-    "identityCoverage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["old_file_lines_moved", "new_file_lines_from_old"],
-      "properties": {
-        "old_file_lines_moved": { "$ref": "#/$defs/ratio" },
-        "new_file_lines_from_old": { "$ref": "#/$defs/ratio" }
-      }
-    },
     "identityEvent": {
       "type": "object",
       "additionalProperties": false,
@@ -317,8 +303,7 @@
         "old_identity",
         "moved_to",
         "new_identity",
-        "confidence",
-        "coverage"
+        "confidence"
       ],
       "properties": {
         "kind": { "enum": ["renamed", "path_reused"] },
@@ -330,8 +315,7 @@
             { "type": "null" }
           ]
         },
-        "confidence": { "enum": ["exact", "partial"] },
-        "coverage": { "$ref": "#/$defs/identityCoverage" }
+        "confidence": { "enum": ["exact", "partial"] }
       }
     },
     "summary": {

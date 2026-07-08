@@ -57,18 +57,18 @@ export function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
   }
 
   return [...flows.values()].sort((left, right) =>
-    left.srcPath.localeCompare(right.srcPath) ||
-    left.dstPath.localeCompare(right.dstPath)
+    comparePath(left.srcPath, right.srcPath) ||
+    comparePath(left.dstPath, right.dstPath)
   );
 }
 
 function renderIdentitySources(flows: IdentityFlow[]): string[] {
   const flowsBySrc = groupBy(flows, (flow) => flow.srcPath);
   const lines: string[] = [];
-  for (const srcPath of [...flowsBySrc.keys()].sort()) {
+  for (const srcPath of [...flowsBySrc.keys()].sort(comparePath)) {
     const srcFlows = (flowsBySrc.get(srcPath) ?? []).sort((left, right) =>
       right.movedLines - left.movedLines ||
-      left.dstPath.localeCompare(right.dstPath)
+      comparePath(left.dstPath, right.dstPath)
     );
     const srcLines = srcFlows[0]?.srcLines ?? 0;
     const parts = srcFlows.map((flow) =>
@@ -87,10 +87,10 @@ function renderIdentitySources(flows: IdentityFlow[]): string[] {
 function renderIdentityDestinations(flows: IdentityFlow[]): string[] {
   const flowsByDst = groupBy(flows, (flow) => flow.dstPath);
   const lines: string[] = [];
-  for (const dstPath of [...flowsByDst.keys()].sort()) {
+  for (const dstPath of [...flowsByDst.keys()].sort(comparePath)) {
     const dstFlows = (flowsByDst.get(dstPath) ?? []).sort((left, right) =>
       right.movedLines - left.movedLines ||
-      left.srcPath.localeCompare(right.srcPath)
+      comparePath(left.srcPath, right.srcPath)
     );
     const dstLines = dstFlows[0]?.dstLines ?? 0;
     const parts = dstFlows.map((flow) =>
@@ -126,10 +126,10 @@ interface PrettyRow {
 function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
   const flowsBySrc = groupBy(flows, (flow) => flow.srcPath);
   const rows: PrettyRow[] = [];
-  for (const srcPath of [...flowsBySrc.keys()].sort()) {
+  for (const srcPath of [...flowsBySrc.keys()].sort(comparePath)) {
     const srcFlows = (flowsBySrc.get(srcPath) ?? []).sort((left, right) =>
       right.movedLines - left.movedLines ||
-      left.dstPath.localeCompare(right.dstPath)
+      comparePath(left.dstPath, right.dstPath)
     );
     const srcLines = srcFlows[0]?.srcLines ?? 0;
     let first = true;
@@ -159,10 +159,10 @@ function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
 function destinationRows(flows: IdentityFlow[]): PrettyRow[] {
   const flowsByDst = groupBy(flows, (flow) => flow.dstPath);
   const rows: PrettyRow[] = [];
-  for (const dstPath of [...flowsByDst.keys()].sort()) {
+  for (const dstPath of [...flowsByDst.keys()].sort(comparePath)) {
     const dstFlows = (flowsByDst.get(dstPath) ?? []).sort((left, right) =>
       right.movedLines - left.movedLines ||
-      left.srcPath.localeCompare(right.srcPath)
+      comparePath(left.srcPath, right.srcPath)
     );
     const dstLines = dstFlows[0]?.dstLines ?? 0;
     let first = true;
@@ -200,6 +200,10 @@ function renderPrettyRows(rows: PrettyRow[]): string[] {
 
 function maxWidth(values: string[]): number {
   return values.reduce((max, value) => Math.max(max, value.length), 0);
+}
+
+function comparePath(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function groupBy<T>(values: T[], keyFor: (value: T) => string): Map<string, T[]> {

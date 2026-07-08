@@ -34,9 +34,11 @@ jobs:
           const expected = [
             "digestAlgorithm",
             "digestCommit",
+            "identityFlows",
             "renderContent",
             "renderIdentity",
-            "renderIdentitySummary",
+            "renderIdentityFrom",
+            "renderIdentityTo",
             "schemaVersion",
             "verifyCommit",
             "verifyDigest"
@@ -48,9 +50,9 @@ jobs:
           }
 
           const require = createRequire(import.meta.url);
-          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v2.schema.json");
+          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v3.schema.json");
           const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
-          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v2") {
+          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v3") {
             throw new Error("packed schema export is invalid");
           }
           NODE
