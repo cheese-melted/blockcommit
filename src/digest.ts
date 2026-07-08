@@ -140,7 +140,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
     }
   }
 
-  const paired = pairLines(removed, added);
+  const paired = pairLines(removed, added, fileDigests);
   const drafts = [
     ...groupPairedLines(paired),
     ...groupOneSidedLines(
@@ -331,7 +331,7 @@ function parseChangedLines(pair: FilePair, oldLines: LineRecord[], newLines: Lin
 // MIN_ALNUM_COUNT); blank lines and lone braces can join a block through
 // extension but never start one. Whole-file binary records are exempt:
 // exact byte equality of an entire file is strong evidence on its own.
-function pairLines(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
+function pairLines(removed: RemovedLine[], added: AddedLine[], files: ChangedFileDigest[]): PairedLine[] {
   const paired: PairedLine[] = [];
   const removedByPos = new Map<string, RemovedLine>();
   const addedByPos = new Map<string, AddedLine>();
@@ -341,6 +341,8 @@ function pairLines(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
   for (const line of added) {
     addedByPos.set(lineId(line.line.path, line.line.lineNo), line);
   }
+
+  pairWholeFileIdentityMoves(removed, added, files, paired);
 
   while (true) {
     const before = paired.length;
@@ -352,16 +354,17 @@ function pairLines(removed: RemovedLine[], added: AddedLine[]): PairedLine[] {
       if (anchor.src.paired !== undefined || anchor.dst.paired !== undefined) {
         continue;
       }
-      pairUp(anchor.src, anchor.dst, paired);
-      extendPairing(anchor, 1, removedByPos, addedByPos, paired);
-      extendPairing(anchor, -1, removedByPos, addedByPos, paired);
+      const pairedAnchor = pairUp(anchor.src, anchor.dst, paired, "unique_anchor");
+      extendPairing(pairedAnchor, 1, removedByPos, addedByPos, paired);
+      extendPairing(pairedAnchor, -1, removedByPos, addedByPos, paired);
     }
     if (paired.length === before) {
       break;
     }
   }
 
-  pairExactUnmatchedBlocks(removed, added, paired);
+  pairDominantPathIdentityBlocks(removed, added, files, paired);
+  pairExactUnmatchedBlocksByObjective(removed, added, paired);
   annotateMatchMetadata(paired, removed, added);
   return paired;
 }
@@ -454,21 +457,36 @@ function extendPairing(
     if (nextSrc.line.key !== nextDst.line.key) {
       return;
     }
-    pairUp(nextSrc, nextDst, paired);
+    pairUp(nextSrc, nextDst, paired, anchor.match.chosen_by);
     src = nextSrc.line;
     dst = nextDst.line;
   }
 }
 
-function pairUp(src: RemovedLine, dst: AddedLine, paired: PairedLine[]): void {
+function pairUp(
+  src: RemovedLine,
+  dst: AddedLine,
+  paired: PairedLine[],
+  chosenBy: MatchMetadata["chosen_by"] = "unique_anchor"
+): PairedLine {
   src.paired = dst;
   dst.paired = src;
-  paired.push({ src, dst, match: defaultMatchMetadata() });
+  const pair = { src, dst, match: defaultMatchMetadata(chosenBy) };
+  paired.push(pair);
+  return pair;
 }
 
-function pairExactUnmatchedBlocks(removed: RemovedLine[], added: AddedLine[], paired: PairedLine[]): void {
-  const removedByPayload = uniqueGroupsByPayload(groupUnpairedRemovedLines(removed));
-  const addedByPayload = uniqueGroupsByPayload(groupUnpairedAddedLines(added));
+function pairWholeFileIdentityMoves(
+  removed: RemovedLine[],
+  added: AddedLine[],
+  files: ChangedFileDigest[],
+  paired: PairedLine[]
+): void {
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const removedGroups = groupUnpairedRemovedLines(removed).filter((group) => isCompleteOldFileGroup(group, filesByPath));
+  const addedGroups = groupUnpairedAddedLines(added).filter((group) => isCompleteNewFileGroup(group, filesByPath));
+  const removedByPayload = uniqueGroupsByPayload(removedGroups);
+  const addedByPayload = uniqueGroupsByPayload(addedGroups);
 
   for (const [payloadKey, srcGroup] of removedByPayload) {
     if (srcGroup === null || !pairableExactFallbackGroup(srcGroup)) {
@@ -479,9 +497,219 @@ function pairExactUnmatchedBlocks(removed: RemovedLine[], added: AddedLine[], pa
       continue;
     }
     for (let index = 0; index < srcGroup.length; index += 1) {
-      pairUp(srcGroup[index], dstGroup[index] as AddedLine, paired);
+      pairUp(srcGroup[index], dstGroup[index] as AddedLine, paired, "whole_file_identity");
     }
   }
+}
+
+function isCompleteOldFileGroup(group: RemovedLine[], filesByPath: Map<string, ChangedFileDigest>): boolean {
+  const file = filesByPath.get(group[0]?.line.path ?? "");
+  return (
+    file !== undefined &&
+    file.old_exists &&
+    file.old_lines > 0 &&
+    file.old_lines === group.length &&
+    group[0]?.line.lineNo === 1 &&
+    group.at(-1)?.line.lineNo === file.old_lines
+  );
+}
+
+function isCompleteNewFileGroup(group: AddedLine[], filesByPath: Map<string, ChangedFileDigest>): boolean {
+  const file = filesByPath.get(group[0]?.line.path ?? "");
+  return (
+    file !== undefined &&
+    file.new_exists &&
+    file.new_lines > 0 &&
+    file.new_lines === group.length &&
+    group[0]?.line.lineNo === 1 &&
+    group.at(-1)?.line.lineNo === file.new_lines
+  );
+}
+
+interface ExactBlockCandidate {
+  srcGroup: RemovedLine[];
+  dstGroup: AddedLine[];
+  chosenBy: MatchMetadata["chosen_by"];
+  score: number;
+}
+
+function pairDominantPathIdentityBlocks(
+  removed: RemovedLine[],
+  added: AddedLine[],
+  files: ChangedFileDigest[],
+  paired: PairedLine[]
+): void {
+  const dominantPairs = dominantPathPairs(removed, added, files);
+  if (dominantPairs.size === 0) {
+    return;
+  }
+
+  const removedGroups = groupUnpairedRemovedLines(removed);
+  const addedGroups = groupUnpairedAddedLines(added);
+  const pairedBySrcPos = new Map(paired.map((pair) => [lineId(pair.src.line.path, pair.src.line.lineNo), pair]));
+  const candidates: ExactBlockCandidate[] = [];
+
+  for (const srcGroup of removedGroups) {
+    for (const dstGroup of addedGroups) {
+      if (!sameExactPayload(srcGroup, dstGroup) || !dominantPairs.has(pathPairKey(srcGroup[0].line.path, dstGroup[0].line.path))) {
+        continue;
+      }
+      if (!pairableExactFallbackGroup(srcGroup) && !hasAdjacentPairedPathContext(srcGroup, dstGroup, pairedBySrcPos)) {
+        continue;
+      }
+      candidates.push({
+        srcGroup,
+        dstGroup,
+        chosenBy: "dominant_path_identity",
+        score: exactBlockCandidateScore(srcGroup, dstGroup, true)
+      });
+    }
+  }
+
+  pairExactBlockCandidates(candidates, paired);
+}
+
+function dominantPathPairs(removed: RemovedLine[], added: AddedLine[], files: ChangedFileDigest[]): Set<string> {
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const removedByPath = lineKeyCountsByPath(removed);
+  const addedByPath = lineKeyCountsByPath(added);
+  const result = new Set<string>();
+
+  for (const [srcPath, srcCounts] of removedByPath) {
+    for (const [dstPath, dstCounts] of addedByPath) {
+      if (srcPath === dstPath) {
+        continue;
+      }
+      const overlap = multisetOverlap(srcCounts, dstCounts);
+      if (overlap < 2) {
+        continue;
+      }
+      const srcLineCount = filesByPath.get(srcPath)?.old_lines ?? totalLineCount(srcCounts);
+      const dstLineCount = filesByPath.get(dstPath)?.new_lines ?? totalLineCount(dstCounts);
+      if ((srcLineCount > 0 && overlap * 2 > srcLineCount) || (dstLineCount > 0 && overlap * 2 > dstLineCount)) {
+        result.add(pathPairKey(srcPath, dstPath));
+      }
+    }
+  }
+
+  return result;
+}
+
+function lineKeyCountsByPath<T extends AddedLine | RemovedLine>(lines: T[]): Map<string, Map<string, number>> {
+  const byPath = new Map<string, Map<string, number>>();
+  for (const line of lines) {
+    let counts = byPath.get(line.line.path);
+    if (counts === undefined) {
+      counts = new Map();
+      byPath.set(line.line.path, counts);
+    }
+    counts.set(line.line.key, (counts.get(line.line.key) ?? 0) + 1);
+  }
+  return byPath;
+}
+
+function multisetOverlap(left: Map<string, number>, right: Map<string, number>): number {
+  let overlap = 0;
+  for (const [key, leftCount] of left) {
+    overlap += Math.min(leftCount, right.get(key) ?? 0);
+  }
+  return overlap;
+}
+
+function totalLineCount(counts: Map<string, number>): number {
+  let total = 0;
+  for (const count of counts.values()) {
+    total += count;
+  }
+  return total;
+}
+
+function hasAdjacentPairedPathContext(
+  srcGroup: RemovedLine[],
+  dstGroup: AddedLine[],
+  pairedBySrcPos: Map<string, PairedLine>
+): boolean {
+  const firstSrc = srcGroup[0].line;
+  const firstDst = dstGroup[0].line;
+  const before = pairedBySrcPos.get(lineId(firstSrc.path, firstSrc.lineNo - 1));
+  if (
+    before !== undefined &&
+    before.dst.line.path === firstDst.path &&
+    before.dst.line.lineNo + 1 === firstDst.lineNo
+  ) {
+    return true;
+  }
+
+  const lastSrc = srcGroup.at(-1)!.line;
+  const lastDst = dstGroup.at(-1)!.line;
+  const after = pairedBySrcPos.get(lineId(lastSrc.path, lastSrc.lineNo + 1));
+  return (
+    after !== undefined &&
+    after.dst.line.path === lastDst.path &&
+    after.dst.line.lineNo - 1 === lastDst.lineNo
+  );
+}
+
+function pairExactUnmatchedBlocksByObjective(removed: RemovedLine[], added: AddedLine[], paired: PairedLine[]): void {
+  const removedGroupsByPayload = groupsByPayload(groupUnpairedRemovedLines(removed));
+  const addedGroupsByPayload = groupsByPayload(groupUnpairedAddedLines(added));
+  const candidates: ExactBlockCandidate[] = [];
+
+  for (const [payloadKey, srcGroups] of removedGroupsByPayload) {
+    if (srcGroups.length !== 1) {
+      continue;
+    }
+    const dstGroups = addedGroupsByPayload.get(payloadKey);
+    if (dstGroups === undefined || dstGroups.length !== 1) {
+      continue;
+    }
+    const srcGroup = srcGroups[0];
+    const dstGroup = dstGroups[0];
+    if (!pairableExactFallbackGroup(srcGroup) || !sameExactPayload(srcGroup, dstGroup)) {
+      continue;
+    }
+    if (srcGroup.length === 1) {
+      continue;
+    }
+    candidates.push({
+      srcGroup,
+      dstGroup,
+      chosenBy: "exact_block_fallback",
+      score: exactBlockCandidateScore(srcGroup, dstGroup, false)
+    });
+  }
+
+  pairExactBlockCandidates(candidates, paired);
+}
+
+function pairExactBlockCandidates(candidates: ExactBlockCandidate[], paired: PairedLine[]): void {
+  const sorted = [...candidates].sort((left, right) =>
+    right.score - left.score ||
+    compareLineRecords(left.srcGroup[0].line, right.srcGroup[0].line) ||
+    compareLineRecords(left.dstGroup[0].line, right.dstGroup[0].line)
+  );
+
+  for (const candidate of sorted) {
+    if (candidate.srcGroup.some((line) => line.paired !== undefined) || candidate.dstGroup.some((line) => line.paired !== undefined)) {
+      continue;
+    }
+    for (let index = 0; index < candidate.srcGroup.length; index += 1) {
+      pairUp(candidate.srcGroup[index], candidate.dstGroup[index], paired, candidate.chosenBy);
+    }
+  }
+}
+
+function exactBlockCandidateScore(srcGroup: RemovedLine[], dstGroup: AddedLine[], hasDominantPathIdentity: boolean): number {
+  const payloadBytes = concatLineBytes(srcGroup.map((line) => line.line)).length;
+  return srcGroup.length * 1000 + payloadBytes + (hasDominantPathIdentity ? 500 : 0) - (srcGroup.length === 1 ? 250 : 0);
+}
+
+function sameExactPayload(srcGroup: RemovedLine[], dstGroup: AddedLine[]): boolean {
+  return srcGroup.length === dstGroup.length && exactGroupPayloadKey(srcGroup) === exactGroupPayloadKey(dstGroup);
+}
+
+function pathPairKey(srcPath: string, dstPath: string): string {
+  return `${srcPath}\0${dstPath}`;
 }
 
 function groupUnpairedRemovedLines(lines: RemovedLine[]): RemovedLine[][] {
@@ -523,6 +751,20 @@ function uniqueGroupsByPayload<T extends AddedLine | RemovedLine>(groups: T[][])
   return byPayload;
 }
 
+function groupsByPayload<T extends AddedLine | RemovedLine>(groups: T[][]): Map<string, T[][]> {
+  const byPayload = new Map<string, T[][]>();
+  for (const group of groups) {
+    const payloadKey = exactGroupPayloadKey(group);
+    const existing = byPayload.get(payloadKey);
+    if (existing === undefined) {
+      byPayload.set(payloadKey, [group]);
+    } else {
+      existing.push(group);
+    }
+  }
+  return byPayload;
+}
+
 function exactGroupPayloadKey(group: Array<AddedLine | RemovedLine>): string {
   return `${group.length}\0${sha256(concatLineBytes(group.map((line) => line.line)))}`;
 }
@@ -538,9 +780,11 @@ function annotateMatchMetadata(paired: PairedLine[], removed: RemovedLine[], add
   for (const pair of paired) {
     const duplicateRemovedCandidates = Math.max(0, (removedCounts.get(pair.src.line.key) ?? 0) - 1);
     const duplicateAddedCandidates = Math.max(0, (addedCounts.get(pair.dst.line.key) ?? 0) - 1);
+    const ambiguous = pair.match.ambiguous || duplicateRemovedCandidates > 0 || duplicateAddedCandidates > 0;
     pair.match = {
-      algorithm: "exact-line-sha256-patience",
-      ambiguous: duplicateRemovedCandidates > 0 || duplicateAddedCandidates > 0,
+      ...pair.match,
+      confidence: ambiguous ? "ambiguous" : pair.match.confidence,
+      ambiguous,
       duplicate_removed_candidates: duplicateRemovedCandidates,
       duplicate_added_candidates: duplicateAddedCandidates
     };
@@ -555,13 +799,45 @@ function countByLineKey(lines: LineRecord[]): Map<string, number> {
   return counts;
 }
 
-function defaultMatchMetadata(): MatchMetadata {
+function defaultMatchMetadata(chosenBy: MatchMetadata["chosen_by"] = "unpaired"): MatchMetadata {
   return {
-    algorithm: "exact-line-sha256-patience",
+    algorithm: digestAlgorithm.name,
+    confidence: defaultConfidence(chosenBy),
     ambiguous: false,
     duplicate_removed_candidates: 0,
-    duplicate_added_candidates: 0
+    duplicate_added_candidates: 0,
+    identity_preserving_score: defaultIdentityPreservingScore(chosenBy),
+    chosen_by: chosenBy
   };
+}
+
+function defaultConfidence(chosenBy: MatchMetadata["chosen_by"]): MatchMetadata["confidence"] {
+  if (chosenBy === "whole_file_identity") {
+    return "exact";
+  }
+  if (chosenBy === "unique_anchor" || chosenBy === "dominant_path_identity" || chosenBy === "exact_block_fallback") {
+    return "strong";
+  }
+  return "weak";
+}
+
+function defaultIdentityPreservingScore(chosenBy: MatchMetadata["chosen_by"]): number {
+  if (chosenBy === "whole_file_identity") {
+    return 1000;
+  }
+  if (chosenBy === "unique_anchor") {
+    return 500;
+  }
+  if (chosenBy === "dominant_path_identity") {
+    return 400;
+  }
+  if (chosenBy === "exact_block_fallback") {
+    return 300;
+  }
+  if (chosenBy === "best_effort_tiebreak") {
+    return 100;
+  }
+  return 0;
 }
 
 function groupPairedLines(paired: PairedLine[]): BlockDraft[] {
@@ -716,13 +992,38 @@ function blockMatchMetadata(draft: BlockDraft): MatchMetadata {
   if (pairs.length === 0) {
     return defaultMatchMetadata();
   }
+  const ambiguous = pairs.some((pair) => pair.match.ambiguous);
+  const chosenBy = strongestChosenBy(pairs.map((pair) => pair.match.chosen_by));
 
   return {
-    algorithm: "exact-line-sha256-patience",
-    ambiguous: pairs.some((pair) => pair.match.ambiguous),
+    algorithm: digestAlgorithm.name,
+    confidence: ambiguous ? "ambiguous" : strongestConfidence(pairs.map((pair) => pair.match.confidence)),
+    ambiguous,
     duplicate_removed_candidates: Math.max(...pairs.map((pair) => pair.match.duplicate_removed_candidates)),
-    duplicate_added_candidates: Math.max(...pairs.map((pair) => pair.match.duplicate_added_candidates))
+    duplicate_added_candidates: Math.max(...pairs.map((pair) => pair.match.duplicate_added_candidates)),
+    identity_preserving_score: pairs.reduce(
+      (score, pair) => score + pair.match.identity_preserving_score,
+      pairs.length
+    ),
+    chosen_by: chosenBy
   };
+}
+
+function strongestChosenBy(values: MatchMetadata["chosen_by"][]): MatchMetadata["chosen_by"] {
+  const priority: MatchMetadata["chosen_by"][] = [
+    "whole_file_identity",
+    "dominant_path_identity",
+    "unique_anchor",
+    "exact_block_fallback",
+    "best_effort_tiebreak",
+    "unpaired"
+  ];
+  return priority.find((value) => values.includes(value)) ?? "unpaired";
+}
+
+function strongestConfidence(values: MatchMetadata["confidence"][]): MatchMetadata["confidence"] {
+  const priority: MatchMetadata["confidence"][] = ["exact", "strong", "weak", "ambiguous"];
+  return priority.find((value) => values.includes(value)) ?? "weak";
 }
 
 function safeRenderBlockPatch(

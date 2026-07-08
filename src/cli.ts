@@ -7,10 +7,10 @@ import { renderIdentity, renderOps } from "./ops";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
 
-type Format = "json" | "jsonl" | "ops" | "identity" | "blockpatch";
+type Format = "json" | "jsonl" | "blockpatch";
 
 interface CliOptions {
-  command: "digest" | "verify" | "help";
+  command: "digest" | "content" | "identity" | "verify" | "help";
   commit: string;
   cwd?: string;
   format?: Format;
@@ -29,6 +29,16 @@ async function main(argv: string[]): Promise<number> {
   if (options.command === "verify") {
     return runVerify(options);
   }
+  if (options.command === "content") {
+    const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+    process.stdout.write(renderOps(digest));
+    return 0;
+  }
+  if (options.command === "identity") {
+    const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
+    process.stdout.write(renderIdentity(digest));
+    return 0;
+  }
 
   if (options.command === "digest" && options.range !== undefined) {
     return runDigestRange(options);
@@ -40,14 +50,6 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const digest = digestCommit({ cwd: options.cwd, commit: options.commit });
-  if (format === "ops") {
-    process.stdout.write(renderOps(digest));
-    return 0;
-  }
-  if (format === "identity") {
-    process.stdout.write(renderIdentity(digest));
-    return 0;
-  }
   if (format === "jsonl") {
     process.stdout.write(JSON.stringify(digest));
     process.stdout.write("\n");
@@ -179,7 +181,7 @@ function parseArgs(argv: string[]): CliOptions {
     return { command: "help", commit: "HEAD", format: "json", pretty: false, strict: false };
   }
 
-  if (first !== "digest" && first !== "verify") {
+  if (first !== "digest" && first !== "content" && first !== "identity" && first !== "verify") {
     throw new Error(`unknown command: ${first}`);
   }
 
@@ -238,6 +240,12 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.range !== undefined && sawCommit) {
     throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
+  if ((options.command === "content" || options.command === "identity") && options.range !== undefined) {
+    throw new Error(`${options.command} does not support --range`);
+  }
+  if ((options.command === "content" || options.command === "identity") && options.format !== undefined) {
+    throw new Error(`${options.command} does not support --format`);
+  }
   if (options.strict && (options.command !== "digest" || options.format !== "blockpatch")) {
     throw new Error("--strict is only supported with digest --format blockpatch");
   }
@@ -257,7 +265,7 @@ function requireValue(args: string[], flag: string): string {
 }
 
 function parseFormat(value: string): Format {
-  if (value === "json" || value === "jsonl" || value === "ops" || value === "identity" || value === "blockpatch") {
+  if (value === "json" || value === "jsonl" || value === "blockpatch") {
     return value;
   }
   throw new Error(`unknown format: ${value}`);
@@ -268,8 +276,8 @@ function printHelp(): void {
 
 Usage:
   blockcommit digest [commit] [--cwd <repo>] [--pretty]
-  blockcommit digest [commit] --format ops
-  blockcommit digest [commit] --format identity
+  blockcommit content [commit] [--cwd <repo>]
+  blockcommit identity [commit] [--cwd <repo>]
   blockcommit digest [commit] --format blockpatch [--strict]
   blockcommit digest --range <rev-range> --format jsonl [--cwd <repo>]
   blockcommit verify [commit] [--cwd <repo>]
@@ -278,19 +286,18 @@ Usage:
   blockcommit verify --range <rev-range> [--cwd <repo>]
 
 Commands:
-  digest  emit the line-move digest for a commit
-  verify  rebuild each changed file from parent + digest blocks and
-          byte-compare against the commit; --range walks a rev-list
-          (merges skipped) and verifies every commit in it. Passing
-          a JSON file verifies that digest against its referenced commit
-          and requires --cwd because digests do not store local repo paths.
+  digest    emit the canonical JSON line-move digest for a commit
+  content   emit compact content operations: moved, inserted, and deleted blocks
+  identity  emit pairwise file-identity flow between paths
+  verify    rebuild each changed file from parent + digest blocks and
+            byte-compare against the commit; --range walks a rev-list
+            (merges skipped) and verifies every commit in it. Passing
+            a JSON file verifies that digest against its referenced commit
+            and requires --cwd because digests do not store local repo paths.
 
 Formats:
   json        full line-move digest (canonical)
   jsonl       one canonical digest JSON record per line, for digest ranges
-  ops         compact content view: one line per moved, inserted, or
-              deleted block
-  identity    exact file-identity view: renames and path reuse
   blockpatch  rendered blockpatch documents for directly representable blocks
               (--strict exits nonzero unless every block is rendered)
 `);

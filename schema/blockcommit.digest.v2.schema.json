@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v1.schema.json",
-  "title": "blockcommit digest v1",
+  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v2.schema.json",
+  "title": "blockcommit digest v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "algorithm", "commit", "parent", "files", "blocks", "identity", "summary"],
   "properties": {
-    "schema_version": { "const": "blockcommit.digest.v1" },
+    "schema_version": { "const": "blockcommit.digest.v2" },
     "algorithm": { "$ref": "#/$defs/algorithm" },
     "commit": { "$ref": "#/$defs/gitOid" },
     "parent": {
@@ -71,12 +71,13 @@
     "algorithm": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version", "anchor_min_alnum", "exact_block_fallback", "git_diff"],
+      "required": ["name", "version", "anchor_min_alnum", "exact_block_fallback", "whole_file_identity", "git_diff"],
       "properties": {
-        "name": { "const": "exact-line-sha256-patience" },
-        "version": { "const": 1 },
+        "name": { "const": "exact-line-sha256-identity-preserving" },
+        "version": { "const": 2 },
         "anchor_min_alnum": { "const": 4 },
         "exact_block_fallback": { "const": true },
+        "whole_file_identity": { "const": true },
         "git_diff": {
           "type": "object",
           "additionalProperties": false,
@@ -118,15 +119,33 @@
       "additionalProperties": false,
       "required": [
         "algorithm",
+        "confidence",
         "ambiguous",
         "duplicate_removed_candidates",
-        "duplicate_added_candidates"
+        "duplicate_added_candidates",
+        "identity_preserving_score",
+        "chosen_by"
       ],
       "properties": {
-        "algorithm": { "const": "exact-line-sha256-patience" },
+        "algorithm": { "const": "exact-line-sha256-identity-preserving" },
+        "confidence": { "enum": ["exact", "strong", "weak", "ambiguous"] },
         "ambiguous": { "type": "boolean" },
         "duplicate_removed_candidates": { "$ref": "#/$defs/nonNegativeInteger" },
-        "duplicate_added_candidates": { "$ref": "#/$defs/nonNegativeInteger" }
+        "duplicate_added_candidates": { "$ref": "#/$defs/nonNegativeInteger" },
+        "identity_preserving_score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "chosen_by": {
+          "enum": [
+            "unique_anchor",
+            "whole_file_identity",
+            "dominant_path_identity",
+            "exact_block_fallback",
+            "best_effort_tiebreak",
+            "unpaired"
+          ]
+        }
       }
     },
     "lineMoveBlock": {

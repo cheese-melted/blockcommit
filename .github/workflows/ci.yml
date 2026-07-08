@@ -44,9 +44,9 @@ jobs:
           }
 
           const require = createRequire(import.meta.url);
-          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v1.schema.json");
+          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v2.schema.json");
           const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
-          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v1") {
+          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v2") {
             throw new Error("packed schema export is invalid");
           }
           NODE
@@ -65,6 +65,6 @@ jobs:
           git -C "$repo" mv a.txt b.txt
           printf 'added\n' > "$repo/a.txt"
           git -C "$repo" add . && git -C "$repo" commit -qm move
-          node dist/cli.js digest HEAD --cwd "$repo" --format ops | grep -q '^M a.txt'
+          node dist/cli.js content HEAD --cwd "$repo" | grep -q '^M a.txt'
           node dist/cli.js digest HEAD --cwd "$repo" --pretty > /dev/null
           node dist/cli.js verify --range "$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD" --cwd "$repo"

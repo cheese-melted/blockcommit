@@ -15,8 +15,8 @@ A plain diff forgets where lines came from: moving a function to another file lo
 The tool is layered:
 
 1. **JSON digest** (core, canonical): exact spans, hashes, payloads
-2. **ops view**: compact movement tuples, one line per block
-3. **identity view**: derived file/object continuity (renames, path reuse)
+2. **content view**: compact movement tuples, one line per block
+3. **identity view**: pairwise file-continuity flow between paths
 4. **blockpatch view**: patch-faithful rendering where representable
 
 ## Usage
@@ -26,9 +26,11 @@ From npm, after the package is published:
 ```sh
 npm install -g blockcommit
 blockcommit digest HEAD --pretty
+blockcommit content HEAD
+blockcommit identity HEAD
 
 # or without a global install
-npx blockcommit digest HEAD --format ops
+npx blockcommit content HEAD
 ```
 
 For local development:
@@ -39,8 +41,8 @@ bun test
 bun run build
 
 blockcommit digest HEAD --pretty            # JSON digest
-blockcommit digest HEAD --format ops        # compact content-op view
-blockcommit digest HEAD --format identity   # exact file-identity view
+blockcommit content HEAD                    # compact content-op view
+blockcommit identity HEAD                   # pairwise file-identity flow
 blockcommit digest HEAD --format blockpatch # blockpatch rendering
 blockcommit digest HEAD --format blockpatch --strict
 blockcommit digest --range v1.0..main --format jsonl
@@ -51,29 +53,37 @@ blockcommit verify digest.json --cwd . --format json
 blockcommit verify --range v1.0..main       # round-trip check a whole range
 ```
 
-`digest [commit] [--cwd <repo>] [--pretty]` prints the JSON digest (the stable first output). `digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line. `--format blockpatch` prints a derived `.blockpatch` rendering for blocks the current `blockpatch` format can represent directly; blocks that cannot be rendered remain JSON-only with an `unsupported` reason, and a summary of omitted blocks is printed to stderr. Add `--strict` to exit nonzero instead of emitting an incomplete blockpatch stream.
+`digest [commit] [--cwd <repo>] [--pretty]` prints the canonical JSON digest: the full source of truth for tools, storage, and verification. It includes commit metadata, algorithm/schema metadata, changed file facts, content blocks with spans and payload metadata, derived identity events, and summary counts.
+
+`content [commit] [--cwd <repo>]` and `identity [commit] [--cwd <repo>]` are readable views over that digest. `content` prints the block-operation layer; `identity` prints the pairwise path-flow layer.
+
+`digest --range <rev-range> --format jsonl` prints one canonical digest JSON record per line. `digest --format blockpatch` prints a derived `.blockpatch` rendering for blocks the current `blockpatch` format can represent directly; blocks that cannot be rendered remain JSON-only with an `unsupported` reason, and a summary of omitted blocks is printed to stderr. Add `--strict` to exit nonzero instead of emitting an incomplete blockpatch stream.
 
 `verify [commit]` rebuilds every represented changed file from its parent-commit content plus the digest blocks and byte-compares the result against what the commit actually contains. Files that cannot be represented as line blocks are still checked for explicit unsupported metadata. `verify digest.json --cwd <repo>` recomputes the digest for the referenced commit and fails if algorithm metadata, payload encodings, hashes, spans, file facts, block facts, or identity events do not match. Saved digests do not store local checkout paths, so `--cwd` is required when verifying a JSON file. When an argument names both an existing file and a resolvable commit (a stray file named `main`, say), the commit wins; the argument is only read as a saved digest when it does not resolve as a commit. Add `--format json` to return the structured `VerifyResult` instead of human-readable lines. `verify --range <rev-range>` verifies every non-merge commit `git rev-list` produces for the range.
 
 ## How lines are paired
 
-Pairing is patience-diff-style rather than first-come-first-served:
+Pairing is identity-preserving and deterministic:
 
-1. A removed line and an added line whose content is **unique** among the commit's unpaired changed lines anchor a pairing.
-2. Each anchor **extends** through adjacent lines with equal content, so non-unique neighbors (blank lines, lone braces) join a moved block when its context carries them.
-3. Anchoring repeats on the leftovers until no unique content remains.
-4. Remaining contiguous delete/insert groups with a unique exact payload match are paired as moves when the group has enough alphanumeric content across the whole payload. This recovers duplicate-only and short-line whole-block moves without pairing blank/brace-only noise.
+1. Exact whole-file identity moves are locked first when a removed file's full payload appears as a new file's full payload. This covers ordinary renames and path reuse before line-level pairing can fragment them.
+2. A removed line and an added line whose content is **unique** among the commit's unpaired changed lines anchor a pairing.
+3. Each anchor **extends** through adjacent lines with equal content, so non-unique neighbors (blank lines, lone braces) join a moved block when its context carries them.
+4. Anchoring repeats on the leftovers until no unique content remains.
+5. Remaining contiguous delete/insert groups with a unique exact payload match are paired as moves when the group has enough alphanumeric content across the whole payload. This recovers duplicate-only and short-line blocks without pairing blank/brace-only noise.
 
 A line may only *anchor* a pairing if it carries enough alphanumeric content to plausibly have an identity of its own (compare git's `--color-moved` heuristics). This keeps coincidentally identical trivial lines — a blank line deleted here, an unrelated blank line added there — from pairing into phantom moves. In practice this also minimizes the op count: pairing trivial lines would shatter contiguous insert/delete blocks into many fragments.
+
+The digest is exact about bytes and spans. Identity is best-effort: when several byte-correct pairings are possible, blockcommit chooses the most identity-preserving deterministic pairing it can justify and marks weak or ambiguous choices in `match`.
 
 The canonical algorithm metadata is embedded in every digest:
 
 ```json
 {
-  "name": "exact-line-sha256-patience",
-  "version": 1,
+  "name": "exact-line-sha256-identity-preserving",
+  "version": 2,
   "anchor_min_alnum": 4,
   "exact_block_fallback": true,
+  "whole_file_identity": true,
   "git_diff": { "algorithm": "myers", "indent_heuristic": false }
 }
 ```
@@ -86,12 +96,13 @@ Coordinate semantics, since consumers will otherwise guess: `src` spans use **pa
 
 ```jsonc
 {
-  "schema_version": "blockcommit.digest.v1",
+  "schema_version": "blockcommit.digest.v2",
   "algorithm": {
-    "name": "exact-line-sha256-patience",
-    "version": 1,
+    "name": "exact-line-sha256-identity-preserving",
+    "version": 2,
     "anchor_min_alnum": 4,
     "exact_block_fallback": true,
+    "whole_file_identity": true,
     "git_diff": { "algorithm": "myers", "indent_heuristic": false }
   },
   "commit": "…", "parent": "…",
@@ -117,10 +128,13 @@ Coordinate semantics, since consumers will otherwise guess: `src` spans use **pa
       "payload_text": "move\n",          // or payload_base64 for non-UTF-8 bytes
       "payload_sha256": "…", "payload_bytes": 5, "payload_lines": 1,
       "match": {
-        "algorithm": "exact-line-sha256-patience",
+        "algorithm": "exact-line-sha256-identity-preserving",
+        "confidence": "exact",
         "ambiguous": false,
         "duplicate_removed_candidates": 0,
-        "duplicate_added_candidates": 0
+        "duplicate_added_candidates": 0,
+        "identity_preserving_score": 501,
+        "chosen_by": "unique_anchor"
       },
       "blockpatch": { "status": "rendered" }
     }
@@ -137,11 +151,11 @@ The canonical digest intentionally omits the local repository path. Two checkout
 
 When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` or `"partial"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`. Agents should treat those entries as explicit "known unknowns" rather than infer from missing blocks.
 
-The published JSON Schema lives at `schema/blockcommit.digest.v1.schema.json` and is included in the npm package. It describes the canonical digest only; blockpatch document text is derived output from `--format blockpatch`, not cached inside JSON digests.
+The published JSON Schema lives at `schema/blockcommit.digest.v2.schema.json` and is included in the npm package. It describes the canonical digest only; blockpatch document text is derived output from `--format blockpatch`, not cached inside JSON digests.
 
-## Ops view
+## Content view
 
-`--format ops` renders the content layer as compact movement tuples — the `+++`/`---` of a diff reduced to a minimal set of `->` ops. `src` coordinates are parent-image, `dst` coordinates are post-image, and `path:start+count` means start at that line and include that many lines:
+`content` renders the content layer as compact movement tuples — the `+++`/`---` of a diff reduced to a minimal set of `->` ops. `src` coordinates are parent-image, `dst` coordinates are post-image, and `path:start+count` means start at that line and include that many lines:
 
 ```text
 M a.ts:1+6 -> b.ts:1+6
@@ -149,18 +163,23 @@ M a.ts:1+6 -> b.ts:1+6
 - src/dead.ts:1+20
 ```
 
-This is a display/agent format; the JSON digest stays canonical. The ops view drops payload text, payload hashes, byte offsets, and derived identity events.
+This is a display/agent format; the JSON digest stays canonical. The content view drops payload text, payload hashes, byte offsets, and derived identity events.
 
 ## Identity view
 
-The `identity` array names what the move blocks already imply about file continuity, so consumers don't have to re-infer it. The tightened text view only names exact file-level events:
+`identity` renders the file-continuity layer as pairwise line flow between paths:
 
 ```text
-rename old.ts -> new.ts
-reuse a.ts -> b.ts
+a.ts:10 -> b.ts:12 (6)
 ```
 
-`rename` means the old path's full identity moved to the new path and the old path disappeared. `reuse` means the old path's full identity moved to the new path and the old path now contains different content. Partial file-continuity hints remain visible as ordinary `M`, `+`, and `-` content ops instead of getting a standalone identity line.
+This means old `a.ts` had 10 lines, new `b.ts` has 12 lines, and 6 lines moved from `a.ts` to `b.ts` in this commit. A whole-file transfer is just the same notation with matching counts:
+
+```text
+a.ts:6 -> b.ts:6 (6)
+```
+
+The text view is derived from all cross-path `M` blocks. It does not label events as rename, reuse, exact, or partial; those interpretations can be computed from the counts and the content ops.
 
 The motivating case: cut-paste a whole file to a new name, then create *different* content under the old name. Line moves make this visible; the identity layer makes it explicit:
 
@@ -190,8 +209,8 @@ import { digestCommit, renderIdentity, renderOps, verifyCommit, verifyDigest } f
 
 const digest = digestCommit({ cwd: "/path/to/repo", commit: "HEAD" });
 console.log(digest.identity);                                          // derived identity events
-console.log(renderOps(digest));                                        // compact ops view
-console.log(renderIdentity(digest));                                   // exact identity view
+console.log(renderOps(digest));                                        // compact content view
+console.log(renderIdentity(digest));                                   // pairwise identity flow
 const result = verifyCommit({ cwd: "/path/to/repo", commit: "HEAD" }); // { ok, files: [...] }
 const saved = verifyDigest({ cwd: "/path/to/repo", digest });          // verify a saved JSON digest
 ```

@@ -1,10 +1,11 @@
 export const nullPath = "/dev/null";
-export const schemaVersion = "blockcommit.digest.v1";
+export const schemaVersion = "blockcommit.digest.v2";
 export const digestAlgorithm = {
-  name: "exact-line-sha256-patience",
-  version: 1,
+  name: "exact-line-sha256-identity-preserving",
+  version: 2,
   anchor_min_alnum: 4,
   exact_block_fallback: true,
+  whole_file_identity: true,
   git_diff: {
     algorithm: "myers",
     indent_heuristic: false
@@ -32,10 +33,19 @@ export interface BlockPatchRendering {
 }
 
 export interface MatchMetadata {
-  algorithm: "exact-line-sha256-patience";
+  algorithm: "exact-line-sha256-identity-preserving";
+  confidence: "exact" | "strong" | "weak" | "ambiguous";
   ambiguous: boolean;
   duplicate_removed_candidates: number;
   duplicate_added_candidates: number;
+  identity_preserving_score: number;
+  chosen_by:
+    | "unique_anchor"
+    | "whole_file_identity"
+    | "dominant_path_identity"
+    | "exact_block_fallback"
+    | "best_effort_tiebreak"
+    | "unpaired";
 }
 
 export type DigestAlgorithm = typeof digestAlgorithm;

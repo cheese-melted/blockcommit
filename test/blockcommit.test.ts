@@ -50,13 +50,14 @@ describe("digestCommit", () => {
     const commit = commitAll(repo, "move one line");
 
     const digest = digestCommit({ cwd: repo, commit });
-    expect(digest.schema_version).toBe("blockcommit.digest.v1");
+    expect(digest.schema_version).toBe("blockcommit.digest.v2");
     expect(JSON.parse(JSON.stringify(digest))).not.toHaveProperty("repo");
     expect(digest.algorithm).toEqual({
-      name: "exact-line-sha256-patience",
-      version: 1,
+      name: "exact-line-sha256-identity-preserving",
+      version: 2,
       anchor_min_alnum: 4,
       exact_block_fallback: true,
+      whole_file_identity: true,
       git_diff: {
         algorithm: "myers",
         indent_heuristic: false
@@ -205,14 +206,14 @@ describe("digestCommit", () => {
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.summary.moves).toBe(1);
     expect(digest.blocks[0].match).toMatchObject({
-      algorithm: "exact-line-sha256-patience",
+      algorithm: "exact-line-sha256-identity-preserving",
       ambiguous: true,
       duplicate_removed_candidates: 1,
       duplicate_added_candidates: 1
     });
   });
 
-  test("pairs duplicate-only whole-block moves by exact payload fallback", () => {
+  test("locks duplicate-only whole-file moves before line pairing", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "old.txt"), "hello world line\nhello world line\n");
     commitAll(repo, "base");
@@ -233,6 +234,8 @@ describe("digestCommit", () => {
       src: { path: "old.txt", start_line: 1, end_line: 2 },
       dst: { path: "new.txt", start_line: 1, end_line: 2 },
       match: {
+        chosen_by: "whole_file_identity",
+        confidence: "ambiguous",
         ambiguous: true,
         duplicate_removed_candidates: 1,
         duplicate_added_candidates: 1
@@ -247,7 +250,7 @@ describe("digestCommit", () => {
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
-  test("pairs short-line whole-block moves by exact payload fallback", () => {
+  test("locks short-line whole-file moves before line pairing", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "old.txt"), "x=1\ny=2\nz=3\n");
     commitAll(repo, "base");
@@ -266,7 +269,12 @@ describe("digestCommit", () => {
       kind: "move",
       payload_text: "x=1\ny=2\nz=3\n",
       src: { path: "old.txt", start_line: 1, end_line: 3 },
-      dst: { path: "new.txt", start_line: 1, end_line: 3 }
+      dst: { path: "new.txt", start_line: 1, end_line: 3 },
+      match: {
+        chosen_by: "whole_file_identity",
+        confidence: "exact",
+        ambiguous: false
+      }
     });
     expect(digest.identity[0]).toMatchObject({
       kind: "renamed",
@@ -516,7 +524,7 @@ describe("identity", () => {
       confidence: "partial",
       coverage: { old_file_lines_moved: 0.75, new_file_lines_from_old: 1 }
     });
-    expect(renderIdentity(digest)).toBe("");
+    expect(renderIdentity(digest)).toBe("a.ts:4 -> b.ts:3 (3)\n");
   });
 
   test("emits no identity event for in-file reordering or minority moves", () => {
@@ -530,6 +538,21 @@ describe("identity", () => {
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.summary.moves).toBeGreaterThan(0);
     expect(digest.identity).toEqual([]);
+  });
+
+  test("renders minority cross-path movement in the pairwise identity view", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "a.ts"), "move alpha()\nstay bravo()\nstay charlie()\n");
+    writeFileSync(join(repo, "b.ts"), "target delta()\n");
+    commitAll(repo, "base");
+
+    writeFileSync(join(repo, "a.ts"), "stay bravo()\nstay charlie()\n");
+    writeFileSync(join(repo, "b.ts"), "target delta()\nmove alpha()\n");
+    const commit = commitAll(repo, "move one line across paths");
+
+    const digest = digestCommit({ cwd: repo, commit });
+    expect(digest.identity).toEqual([]);
+    expect(renderIdentity(digest)).toBe("a.ts:3 -> b.ts:2 (1)\n");
   });
 });
 
@@ -550,7 +573,7 @@ describe("renderOps", () => {
     ]);
   });
 
-  test("renders exact identity events as tight summaries", () => {
+  test("renders pairwise identity flows", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "a.ts"), "export function first() {}\nexport function second() {}\nexport function third() {}\n");
     commitAll(repo, "base");
@@ -559,7 +582,7 @@ describe("renderOps", () => {
     writeFileSync(join(repo, "a.ts"), "export const replacement = true;\nexport const fresh = 1;\n");
     const commit = commitAll(repo, "cut-paste with name reuse");
 
-    expect(renderIdentity(digestCommit({ cwd: repo, commit }))).toBe("reuse a.ts -> b.ts\n");
+    expect(renderIdentity(digestCommit({ cwd: repo, commit }))).toBe("a.ts:3 -> b.ts:3 (3)\n");
   });
 });
 
@@ -636,12 +659,12 @@ describe("cli", () => {
     writeFileSync(join(repo, "file.txt"), "base\nnext\n");
     const commit = commitAll(repo, "add line");
 
-    const result = cli(["digest", commit, "--cwd", repo, "--format", "ops"]);
+    const result = cli(["content", commit, "--cwd", repo]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^\+ file\.txt:2\+1$/m);
   });
 
-  test("prints exact identity summaries", () => {
+  test("prints pairwise identity flows", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "old.txt"), "alpha\nbeta\n");
     commitAll(repo, "base");
@@ -650,9 +673,9 @@ describe("cli", () => {
     writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
     const commit = commitAll(repo, "rename without git mv");
 
-    const result = cli(["digest", commit, "--cwd", repo, "--format", "identity"]);
+    const result = cli(["identity", commit, "--cwd", repo]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("rename old.txt -> new.txt\n");
+    expect(result.stdout).toBe("old.txt:2 -> new.txt:2 (2)\n");
   });
 
   test("prints canonical digest ranges as JSONL", () => {
@@ -668,7 +691,7 @@ describe("cli", () => {
     expect(lines).toHaveLength(1);
     const digest = JSON.parse(lines[0]);
     expect(digest.commit).toBe(second);
-    expect(digest.schema_version).toBe("blockcommit.digest.v1");
+    expect(digest.schema_version).toBe("blockcommit.digest.v2");
   });
 
   test("reports bad commits and unknown options", () => {
@@ -747,11 +770,11 @@ describe("cli", () => {
   });
 
   test("ships a JSON schema for the canonical digest", () => {
-    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v1.schema.json"), "utf8"));
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v2.schema.json"), "utf8"));
     expect(schema).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       properties: {
-        schema_version: { const: "blockcommit.digest.v1" },
+        schema_version: { const: "blockcommit.digest.v2" },
         algorithm: { $ref: "#/$defs/algorithm" }
       }
     });
@@ -762,7 +785,7 @@ describe("cli", () => {
 describe("digest schema", () => {
   test("generated digests validate against the shipped schema", () => {
     const schema = JSON.parse(
-      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v1.schema.json"), "utf8")
+      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v2.schema.json"), "utf8")
     );
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(schema);
@@ -792,10 +815,11 @@ describe("digest schema", () => {
     expect(rootDigest.parent).toBeNull();
     expect(rootDigest).not.toHaveProperty("repo");
     expect(rootDigest.algorithm).toMatchObject({
-      name: "exact-line-sha256-patience",
-      version: 1,
+      name: "exact-line-sha256-identity-preserving",
+      version: 2,
       anchor_min_alnum: 4,
-      exact_block_fallback: true
+      exact_block_fallback: true,
+      whole_file_identity: true
     });
     expect(movesDigest.blocks.some((block) => block.payload_encoding === "base64")).toBe(true);
     expect(movesDigest.files.some((file) => file.unsupported_reason === "binary")).toBe(true);

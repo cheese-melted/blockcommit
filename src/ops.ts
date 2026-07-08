@@ -1,4 +1,4 @@
-import { nullPath, type BlockCommitDigest, type IdentityEvent, type LineMoveBlock, type LineSpan } from "./types";
+import { nullPath, type BlockCommitDigest, type LineMoveBlock, type LineSpan } from "./types";
 
 // Compact content view over the digest: one line per block. src coordinates
 // are parent-image, dst coordinates are post-image, and path:start+count means
@@ -13,13 +13,21 @@ export function renderOps(digest: BlockCommitDigest): string {
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-// Tight file-identity view over the digest. It only names exact file-level
-// continuity events; partial continuity remains visible as ordinary block ops.
+// Pairwise file-identity flow view over the digest. Each line aggregates
+// cross-path move blocks as source old total -> destination new total (moved).
 export function renderIdentity(digest: BlockCommitDigest): string {
-  const lines = digest.identity
-    .filter((event) => event.confidence === "exact")
-    .map((event) => renderIdentityOp(event));
+  const lines = identityFlows(digest).map(
+    (flow) => `${quotePath(flow.srcPath)}:${flow.srcLines} -> ${quotePath(flow.dstPath)}:${flow.dstLines} (${flow.movedLines})`
+  );
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
+}
+
+interface IdentityFlow {
+  srcPath: string;
+  dstPath: string;
+  srcLines: number;
+  dstLines: number;
+  movedLines: number;
 }
 
 function renderBlockOp(block: LineMoveBlock): string {
@@ -32,9 +40,33 @@ function renderBlockOp(block: LineMoveBlock): string {
   return `M ${spanRef(block.src)} -> ${spanRef(block.dst)}`;
 }
 
-function renderIdentityOp(event: IdentityEvent): string {
-  const kind = event.kind === "path_reused" ? "reuse" : "rename";
-  return `${kind} ${quotePath(event.old_identity.path)} -> ${quotePath(event.moved_to.path)}`;
+function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
+  const filesByPath = new Map(digest.files.map((file) => [file.path, file]));
+  const flows = new Map<string, IdentityFlow>();
+
+  for (const block of digest.blocks) {
+    if (block.kind !== "move" || block.src.path === block.dst.path) {
+      continue;
+    }
+    const key = `${block.src.path}\0${block.dst.path}`;
+    const existing = flows.get(key);
+    if (existing !== undefined) {
+      existing.movedLines += block.src.line_count;
+      continue;
+    }
+    flows.set(key, {
+      srcPath: block.src.path,
+      dstPath: block.dst.path,
+      srcLines: filesByPath.get(block.src.path)?.old_lines ?? block.src.line_count,
+      dstLines: filesByPath.get(block.dst.path)?.new_lines ?? block.dst.line_count,
+      movedLines: block.src.line_count
+    });
+  }
+
+  return [...flows.values()].sort((left, right) =>
+    left.srcPath.localeCompare(right.srcPath) ||
+    left.dstPath.localeCompare(right.dstPath)
+  );
 }
 
 function spanRef(span: LineSpan | null): string {
