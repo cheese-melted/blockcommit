@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { computeDigest, computeDigestFor, type DigestComputation, type DigestOptions, type FileState } from "./digest";
 import { type CommitInfo } from "./git";
 import { countLineBytes, type LineRecord } from "./lines";
+import { validateDigest } from "./validate";
 import {
-  schemaVersion,
   type BlockCommitDigest,
   type ChangedFileDigest,
   type FileVerification,
@@ -13,7 +13,7 @@ import {
 
 export interface VerifyDigestOptions {
   cwd?: string;
-  digest: BlockCommitDigest;
+  digest: unknown;
 }
 
 // Rebuilds every changed file from its parent-commit content plus the digest
@@ -56,16 +56,21 @@ function verifyComputation({ digest, fileStates }: DigestComputation): VerifyRes
 }
 
 export function verifyDigest(options: VerifyDigestOptions): VerifyResult {
-  const supplied = options.digest;
-  const checks: FileVerification[] = [];
-
-  if (supplied.schema_version !== schemaVersion) {
-    checks.push({
-      path: "<digest>",
+  const validation = validateDigest(options.digest);
+  if (!validation.ok) {
+    return {
+      commit: commitFromUnknownDigest(options.digest),
       ok: false,
-      reason: `unsupported schema_version ${JSON.stringify(supplied.schema_version)}`
-    });
+      files: validation.errors.map((error) => ({
+        path: error.path === "/" ? "<digest>" : `<digest>${error.path}`,
+        ok: false,
+        reason: `schema validation failed: ${error.message}`
+      }))
+    };
   }
+
+  const supplied = options.digest as BlockCommitDigest;
+  const checks: FileVerification[] = [];
 
   for (const block of supplied.blocks ?? []) {
     checks.push(verifyPayloadMetadata(block));
@@ -93,6 +98,14 @@ export function verifyDigest(options: VerifyDigestOptions): VerifyResult {
     ok: checks.every((file) => file.ok),
     files: checks
   };
+}
+
+function commitFromUnknownDigest(value: unknown): string {
+  if (typeof value !== "object" || value === null || !("commit" in value)) {
+    return "<unknown>";
+  }
+  const commit = (value as { commit?: unknown }).commit;
+  return typeof commit === "string" ? commit : "<unknown>";
 }
 
 function verifyPayloadMetadata(block: LineMoveBlock): FileVerification {

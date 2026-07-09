@@ -6,7 +6,7 @@ import { getCommitInfo, listCommitInfos, tryResolveCommit } from "./git";
 import { renderContent } from "./content";
 import { couplingPayload } from "./coupling";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
-import { cachedDigestForInfo, cacheCommitRange, commitStoreView, renderCommitCacheResult, renderCommitStoreView } from "./store";
+import { cachedDigestForInfo, commitStoreView, renderCommitStoreView } from "./store";
 import { verifyCommitFor, verifyDigest } from "./verify";
 import { type BlockCommitDigest, type VerifyResult } from "./types";
 import { type CommitInfo } from "./git";
@@ -18,7 +18,7 @@ interface CliOptions {
   command:
     | "digest"
     | "view"
-    | "commits"
+    | "cache"
     | "verify"
     | "help";
   commit: string;
@@ -26,7 +26,6 @@ interface CliOptions {
   format?: Format;
   range?: string;
   cache: boolean;
-  fillCache: boolean;
   view: ViewType;
 }
 
@@ -40,8 +39,8 @@ async function main(argv: string[]): Promise<number> {
   if (options.command === "verify") {
     return runVerify(options);
   }
-  if (options.command === "commits") {
-    return runCommits(options);
+  if (options.command === "cache") {
+    return runCache(options);
   }
   if (options.command === "view") {
     return runView(options);
@@ -98,10 +97,7 @@ function digestForInfo(info: CommitInfo, options: CliOptions): BlockCommitDigest
   return options.cache ? cachedDigestForInfo(info) : computeDigestFor(info).digest;
 }
 
-function runCommits(options: CliOptions): number {
-  if (options.fillCache) {
-    return runCache(options);
-  }
+function runCache(options: CliOptions): number {
   const view = commitStoreView(options.cwd ?? process.cwd(), options.range ?? "HEAD");
   if (options.format === "json") {
     process.stdout.write(JSON.stringify(view));
@@ -110,18 +106,6 @@ function runCommits(options: CliOptions): number {
   }
 
   process.stdout.write(renderCommitStoreView(view));
-  return 0;
-}
-
-function runCache(options: CliOptions): number {
-  const result = cacheCommitRange(options.cwd ?? process.cwd(), options.range ?? "HEAD");
-  if (options.format === "json") {
-    process.stdout.write(JSON.stringify(result));
-    process.stdout.write("\n");
-    return 0;
-  }
-
-  process.stdout.write(renderCommitCacheResult(result));
   return 0;
 }
 
@@ -206,10 +190,10 @@ function runVerify(options: CliOptions): number {
 
 function runVerifyDigest(options: CliOptions): number {
   const path = resolve(process.cwd(), options.commit);
-  const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
+  const digest = JSON.parse(readFileSync(path, "utf8"));
   const result: VerifyResult = options.cwd === undefined
     ? {
-      commit: digest.commit,
+      commit: typeof digest?.commit === "string" ? digest.commit : "<unknown>",
       ok: false,
       files: [{ path: "<digest>", ok: false, reason: "cwd is required to verify a saved digest" }]
     }
@@ -240,13 +224,13 @@ function parseArgs(argv: string[]): CliOptions {
   const args = [...argv];
   const first = args.shift();
   if (first === undefined || first === "help" || first === "--help" || first === "-h") {
-    return { command: "help", commit: "HEAD", format: "json", cache: true, fillCache: false, view: "content" };
+    return { command: "help", commit: "HEAD", format: "json", cache: true, view: "content" };
   }
 
   if (
     first !== "digest" &&
     first !== "view" &&
-    first !== "commits" &&
+    first !== "cache" &&
     first !== "verify"
   ) {
     throw new Error(`unknown command: ${first}`);
@@ -256,7 +240,6 @@ function parseArgs(argv: string[]): CliOptions {
     command: first,
     commit: "HEAD",
     cache: true,
-    fillCache: false,
     view: "content"
   };
   let sawCommit = false;
@@ -265,10 +248,6 @@ function parseArgs(argv: string[]): CliOptions {
     const arg = args.shift();
     if (arg === "--no-cache") {
       options.cache = false;
-      continue;
-    }
-    if (arg === "--cache") {
-      options.fillCache = true;
       continue;
     }
     if (arg === "--cwd" || arg === "-C") {
@@ -316,7 +295,7 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.range !== undefined && sawCommit) {
     throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
-  if (options.command === "commits" && sawCommit) {
+  if (options.command === "cache" && sawCommit) {
     throw new Error(`${options.command} does not take a commit; use --range to choose history`);
   }
   if (options.command === "view" && options.range !== undefined && options.view !== "coupling") {
@@ -327,9 +306,6 @@ function parseArgs(argv: string[]): CliOptions {
   }
   if (options.command !== "view" && options.view !== "content") {
     throw new Error(`${options.command} does not support --view`);
-  }
-  if (options.fillCache && options.command !== "commits") {
-    throw new Error(`${options.command} does not support --cache`);
   }
   if (options.command === "digest" && options.format === "jsonl" && options.range === undefined) {
     throw new Error("digest --format jsonl requires --range");
@@ -342,7 +318,7 @@ function parseArgs(argv: string[]): CliOptions {
   ) {
     throw new Error("view --view coupling --format jsonl requires --range");
   }
-  if (options.command === "commits" && options.format === "jsonl") {
+  if (options.command === "cache" && options.format === "jsonl") {
     throw new Error(`${options.command} does not support --format jsonl`);
   }
   if (!options.cache && !isCacheControlledCommand(options.command)) {
@@ -400,8 +376,7 @@ Usage:
   blockcommit view [commit] --view identity-to [--no-cache] [--cwd <path>]
   blockcommit view [commit] --view coupling [--no-cache] [--cwd <path>]
   blockcommit view --view coupling --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
-  blockcommit commits [--range <rev-range>] [--format json] [--cwd <path>]
-  blockcommit commits --cache [--range <rev-range>] [--format json] [--cwd <path>]
+  blockcommit cache [--range <rev-range>] [--format json] [--cwd <path>]
   blockcommit verify [commit] [--cwd <path>]
   blockcommit verify digest.json --cwd <path>
   blockcommit verify [commit|digest.json] --format json [--cwd <path>]
@@ -410,9 +385,8 @@ Usage:
 Commands:
   digest    emit the canonical JSON line-move digest for a commit
   view      emit readable content/identity views or coupling JSON
-  commits   persist and print the commit graph view: digested,
-            undigested, and skipped commits. Add --cache to digest
-            undigested non-merge commits into the persistent store.
+  cache     refresh and print cache state: digested, undigested, and
+            skipped commits.
   verify    rebuild each changed file from parent + digest blocks and
             byte-compare against the commit; --range walks a rev-list
             (merges skipped) and verifies every commit in it. Passing
@@ -426,14 +400,11 @@ Options:
             internal .git/.bgit_cache pointer.
   --no-cache
             bypass the persistent store for digest/view commands. By
-            default, computed commits are read from or written to
+            default, computed digests are read from or written to
             .git/.bgit_cache/blockcommit.
   --view <type>
             choose a view: content, identity, identity-from, identity-to,
             or coupling. Defaults to content.
-  --cache
-            with commits, digest undigested non-merge commits in the
-            selected range into the persistent store.
 
 Formats:
   json        structured JSON output where supported

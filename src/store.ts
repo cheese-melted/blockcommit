@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { couplingPayload } from "./coupling";
 import { computeDigestFor } from "./digest";
 import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
-import { schemaVersion, type BlockCommitDigest } from "./types";
+import { digestAlgorithm, schemaVersion, type BlockCommitDigest } from "./types";
 
 export const commitStoreSchemaVersion = "blockcommit.commit-store.v1";
 
@@ -28,10 +28,6 @@ export interface CommitStoreView {
   range: string;
   summary: CommitStoreSummary;
   commits: CommitStoreCommit[];
-}
-
-export interface CommitCacheResult extends CommitStoreView {
-  cached: number;
 }
 
 interface StoredCommit {
@@ -74,31 +70,6 @@ export function commitStoreView(cwd: string, range = defaultRange): CommitStoreV
   return viewFromGraph(paths, range, graph);
 }
 
-export function cacheCommitRange(cwd: string, range = defaultRange): CommitCacheResult {
-  const graph = listCommitGraphInfos(cwd, range);
-  const paths = storePaths(graph[0]?.repo ?? resolveRepoCacheCwd(cwd));
-  const index = loadIndex(paths);
-
-  for (const info of graph) {
-    index.commits[info.commit] = { commit: info.commit, parents: info.parents };
-  }
-  saveIndex(paths, index);
-
-  let cached = 0;
-  for (const info of graph) {
-    if (info.parents.length > 1 || hasCachedCommit(paths, info.commit)) {
-      continue;
-    }
-    writeCachedDigest(paths, toCommitInfo(info), computeDigestFor(toCommitInfo(info)).digest);
-    cached += 1;
-  }
-
-  return {
-    ...viewFromGraph(paths, range, graph),
-    cached
-  };
-}
-
 export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
   const paths = storePaths(info.repo);
   const index = loadIndex(paths);
@@ -108,7 +79,7 @@ export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
   };
   saveIndex(paths, index);
 
-  const cached = readCachedDigest(paths, info.commit);
+  const cached = readCachedDigest(paths, info);
   if (cached !== null) {
     return cached;
   }
@@ -144,22 +115,16 @@ export function renderCommitStoreView(view: CommitStoreView): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function renderCommitCacheResult(result: CommitCacheResult): string {
-  return `cached ${result.cached} commits (` +
-    `digested ${result.summary.digested}/${result.summary.tracked}, ` +
-    `undigested ${result.summary.undigested}, ` +
-    `skipped ${result.summary.skipped})\n`;
-}
-
 function viewFromGraph(paths: StorePaths, range: string, graph: CommitGraphInfo[]): CommitStoreView {
   const commits = graph.map((info): CommitStoreCommit => {
     if (info.parents.length > 1) {
       return { commit: info.commit, parents: info.parents, status: "skipped", reason: "merge" };
     }
+    const commitInfo = toCommitInfo(info);
     return {
       commit: info.commit,
       parents: info.parents,
-      status: hasCachedCommit(paths, info.commit) ? "digested" : "undigested"
+      status: hasCachedCommit(paths, commitInfo) ? "digested" : "undigested"
     };
   });
   const summary = commits.reduce<CommitStoreSummary>(
@@ -188,17 +153,25 @@ function toCommitInfo(info: CommitGraphInfo): CommitInfo {
   };
 }
 
-function hasCachedCommit(paths: StorePaths, commit: string): boolean {
-  return readCachedDigest(paths, commit) !== null && existsSync(objectPath(paths.coupling, commit));
+function hasCachedCommit(paths: StorePaths, info: CommitInfo): boolean {
+  return readCachedDigest(paths, info) !== null;
 }
 
-function readCachedDigest(paths: StorePaths, commit: string): BlockCommitDigest | null {
+function readCachedDigest(paths: StorePaths, info: CommitInfo): BlockCommitDigest | null {
+  const commit = info.commit;
   const path = objectPath(paths.digests, commit);
   if (!existsSync(path) || !existsSync(objectPath(paths.coupling, commit))) {
     return null;
   }
   const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
-  return digest.schema_version === schemaVersion ? digest : null;
+  return cachedDigestMatches(info, digest) ? digest : null;
+}
+
+function cachedDigestMatches(info: CommitInfo, digest: BlockCommitDigest): boolean {
+  return digest.schema_version === schemaVersion &&
+    digest.commit === info.commit &&
+    digest.parent === info.parent &&
+    JSON.stringify(digest.algorithm) === JSON.stringify(digestAlgorithm);
 }
 
 function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: BlockCommitDigest): void {

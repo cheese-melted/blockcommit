@@ -1,6 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
@@ -9,6 +9,8 @@ import { couplingPayload } from "../src/coupling";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "../src/identity-view";
+import { validateDigest } from "../src/index";
+import { schemaVersion } from "../src/types";
 import { verifyCommit, verifyDigest } from "../src/verify";
 
 function git(cwd: string, args: string[]): string {
@@ -38,6 +40,165 @@ function cli(args: string[], cwd = join(import.meta.dir, "..")) {
     cwd,
     encoding: "utf8"
   });
+}
+
+interface GeneratedFile {
+  content: Buffer;
+  executable?: boolean;
+}
+
+function writeRepoFile(repo: string, path: string, file: GeneratedFile): void {
+  const fullPath = join(repo, path);
+  mkdirSync(dirname(fullPath), { recursive: true });
+  writeFileSync(fullPath, file.content);
+  if (file.executable === true) {
+    chmodSync(fullPath, 0o755);
+  }
+}
+
+function applyFiles(repo: string, files: Record<string, GeneratedFile>): void {
+  for (const [path, file] of Object.entries(files)) {
+    writeRepoFile(repo, path, file);
+  }
+}
+
+function replaceFiles(repo: string, oldFiles: Record<string, GeneratedFile>, newFiles: Record<string, GeneratedFile>): void {
+  for (const path of Object.keys(oldFiles)) {
+    if (!(path in newFiles)) {
+      rmSync(join(repo, path), { force: true });
+    }
+  }
+  applyFiles(repo, newFiles);
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function shuffled<T>(values: T[], random: () => number): T[] {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+function textFile(lines: string[], options: { finalNewline?: boolean; executable?: boolean } = {}): GeneratedFile {
+  let text = lines.join("");
+  if (options.finalNewline === false && text.endsWith("\n")) {
+    text = text.slice(0, -1);
+  }
+  return { content: Buffer.from(text, "utf8"), executable: options.executable };
+}
+
+function mixedTextFile(prefix: string, seed: number): GeneratedFile {
+  return {
+    content: Buffer.concat([
+      Buffer.from(`${prefix} start ${seed}\n`, "utf8"),
+      Buffer.from([0xff, 0xfe, 0x0a]),
+      Buffer.from(`${prefix} end ${seed}\n`, "utf8")
+    ])
+  };
+}
+
+function generatedLines(seed: number, name: string, count: number, random: () => number): string[] {
+  const repeated = [
+    "repeat();\n",
+    "repeat();\n",
+    "\n",
+    "}\n",
+    "{\n",
+    "x=1\n",
+    "case shared:\n",
+    "return value;\n"
+  ];
+  const lines: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (index % 5 === 0) {
+      lines.push(`${name}_unique_${seed}_${index}();\n`);
+      continue;
+    }
+    lines.push(repeated[Math.floor(random() * repeated.length)]);
+  }
+  return lines;
+}
+
+function generatedCommitCase(seed: number): {
+  oldFiles: Record<string, GeneratedFile>;
+  newFiles: Record<string, GeneratedFile>;
+} {
+  const random = seededRandom(seed);
+  const oldA = generatedLines(seed, "a", 24, random);
+  const oldB = generatedLines(seed, "b", 20, random);
+  const oldLarge = generatedLines(seed, "large", 140, random);
+  const split = generatedLines(seed, "split", 18, random);
+  const mergeOne = generatedLines(seed, "merge_one", 12, random);
+  const mergeTwo = generatedLines(seed, "merge_two", 12, random);
+
+  const oldFiles: Record<string, GeneratedFile> = {
+    "a.ts": textFile(oldA),
+    "b.ts": textFile(oldB),
+    "large.txt": textFile(oldLarge),
+    "script.sh": textFile(["echo base\n"], { executable: false }),
+    "split.ts": textFile(split),
+    "merge-one.ts": textFile(mergeOne),
+    "merge-two.ts": textFile(mergeTwo),
+    [`unicode-${seed}-é.txt`]: textFile([`héllo ${seed}\n`, "repeat();\n"], { finalNewline: seed % 2 === 0 }),
+    "nonutf8.txt": mixedTextFile("old", seed)
+  };
+
+  const movedFromA = oldA.slice(2, 9);
+  const reorderedA = shuffled(oldA.slice(9, 18), random);
+  const reorderedB = shuffled(oldB.slice(3, 15), random);
+  const largePrefix = oldLarge.slice(0, 20);
+  const largeMiddle = oldLarge.slice(60, 95);
+  const largeSuffix = oldLarge.slice(120);
+
+  const newFiles: Record<string, GeneratedFile> = {
+    "a.ts": textFile([
+      `fresh_a_${seed}();\n`,
+      ...reorderedA,
+      "repeat();\n",
+      "\n",
+      "}\n"
+    ], { finalNewline: seed % 3 !== 0 }),
+    "b.ts": textFile([
+      ...oldB.slice(0, 3),
+      ...movedFromA,
+      `fresh_b_${seed}();\n`,
+      ...reorderedB
+    ]),
+    "large.txt": textFile([
+      ...largePrefix,
+      `large_insert_${seed}();\n`,
+      ...largeSuffix,
+      ...largeMiddle
+    ]),
+    "script.sh": textFile(["echo base\n", `echo changed ${seed}\n`], { executable: true }),
+    "split-left.ts": textFile(split.slice(0, 9)),
+    "split-right.ts": textFile(split.slice(9)),
+    "merged.ts": textFile([...mergeTwo.slice(0, 6), ...mergeOne, ...mergeTwo.slice(6)]),
+    [`unicode-${seed}-é.txt`]: textFile([`héllo ${seed}\n`, ...movedFromA.slice(0, 2), `fin ${seed}\n`], {
+      finalNewline: seed % 2 !== 0
+    }),
+    "nonutf8.txt": {
+      content: Buffer.concat([
+        Buffer.from(`new start ${seed}\n`, "utf8"),
+        Buffer.from([0xfa, 0xfb, 0x0a]),
+        Buffer.from(`new end ${seed}`, "utf8")
+      ])
+    }
+  };
+
+  return { oldFiles, newFiles };
 }
 
 describe("digestCommit", () => {
@@ -717,6 +878,34 @@ describe("verifyCommit", () => {
     expect(result.files.map((file) => file.path).sort()).toEqual(["a.txt", "fresh.txt", "gone.txt"]);
   });
 
+  test("generated hard commits verify, validate, and digest deterministically across paths", () => {
+    const schema = JSON.parse(
+      readFileSync(join(import.meta.dir, "..", "schema", `${schemaVersion}.schema.json`), "utf8")
+    );
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    const validate = ajv.compile(schema);
+
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const repo = makeRepo();
+      git(repo, ["config", "core.filemode", "true"]);
+      const generated = generatedCommitCase(seed);
+      applyFiles(repo, generated.oldFiles);
+      commitAll(repo, `generated base ${seed}`);
+
+      replaceFiles(repo, generated.oldFiles, generated.newFiles);
+      const commit = commitAll(repo, `generated change ${seed}`);
+
+      const digest = digestCommit({ cwd: repo, commit });
+      const verifyResult = verifyCommit({ cwd: repo, commit });
+      expect(verifyResult.files.filter((file) => !file.ok)).toEqual([]);
+      expect(validate(digest)).toBe(true);
+
+      const clone = mkdtempSync(join(tmpdir(), "blockcommit-fuzz-clone-"));
+      git(tmpdir(), ["clone", repo, clone]);
+      expect(JSON.stringify(digestCommit({ cwd: clone, commit }))).toBe(JSON.stringify(digest));
+    }
+  });
+
   test("round-trips every commit in this repository's history", () => {
     const commits = listCommits(import.meta.dir, "HEAD");
     expect(commits.length).toBeGreaterThan(0);
@@ -747,6 +936,40 @@ describe("verifyCommit", () => {
       path: "<digest>",
       ok: false,
       reason: "identity does not match recomputed digest"
+    });
+  });
+
+  test("validateDigest reports schema failures before saved digest verification", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "base\n");
+    commitAll(repo, "base");
+    writeFileSync(join(repo, "file.txt"), "base\nnext\n");
+    const commit = commitAll(repo, "add line");
+    const digest = digestCommit({ cwd: repo, commit });
+
+    expect(validateDigest(digest)).toEqual({ ok: true, errors: [] });
+
+    const malformed: Record<string, unknown> = { ...digest };
+    delete malformed.blocks;
+    const validation = validateDigest(malformed);
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContainEqual(expect.objectContaining({
+      path: "/",
+      keyword: "required",
+      message: expect.stringContaining("blocks")
+    }));
+
+    const result = verifyDigest({ cwd: repo, digest: malformed });
+    expect(result).toMatchObject({
+      commit,
+      ok: false,
+      files: [
+        {
+          path: "<digest>",
+          ok: false,
+          reason: expect.stringContaining("schema validation failed")
+        }
+      ]
     });
   });
 });
@@ -876,21 +1099,21 @@ describe("cli", () => {
     expect(existsSync(join(root, "digests", `${commit}.json`))).toBe(true);
     expect(existsSync(join(root, "coupling", `${commit}.json`))).toBe(true);
 
-    const view = cli(["commits", "--range", `${commit}^..${commit}`, "--cwd", repo, "--format", "json"]);
+    const view = cli(["cache", "--range", `${commit}^..${commit}`, "--cwd", repo, "--format", "json"]);
     expect(view.status).toBe(0);
     expect(JSON.parse(view.stdout)).toMatchObject({
       summary: { tracked: 1, digested: 1, undigested: 0, skipped: 0 }
     });
   });
 
-  test("tracks and caches commit store state", () => {
+  test("reports cache state and lets digest ranges warm the cache", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "one\n");
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
 
-    const tracked = cli(["commits", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    const tracked = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(tracked.status).toBe(0);
     expect(JSON.parse(tracked.stdout)).toMatchObject({
       schema_version: "blockcommit.commit-store.v1",
@@ -901,24 +1124,52 @@ describe("cli", () => {
     const root = join(repo, ".git", ".bgit_cache", "blockcommit");
     expect(existsSync(join(root, "index.json"))).toBe(true);
 
-    const cached = cli(["commits", "--cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
-    expect(cached.status).toBe(0);
-    expect(JSON.parse(cached.stdout)).toMatchObject({
-      cached: 1,
-      summary: { tracked: 1, digested: 1, undigested: 0, skipped: 0 },
-      commits: [{ commit: second, status: "digested" }]
-    });
+    const warmed = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
+    expect(warmed.status).toBe(0);
+    expect(warmed.stdout.trim().split("\n")).toHaveLength(1);
     expect(existsSync(join(root, "digests", `${second}.json`))).toBe(true);
     expect(existsSync(join(root, "coupling", `${second}.json`))).toBe(true);
 
-    const repeated = cli(["commits", "--cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
-    expect(repeated.status).toBe(0);
-    expect(JSON.parse(repeated.stdout).cached).toBe(0);
+    const cached = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(cached.status).toBe(0);
+    expect(JSON.parse(cached.stdout)).toMatchObject({
+      summary: { tracked: 1, digested: 1, undigested: 0, skipped: 0 },
+      commits: [{ commit: second, status: "digested" }]
+    });
 
-    const text = cli(["commits", "--range", `${first}..${second}`, "--cwd", repo]);
+    const text = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo]);
     expect(text.status).toBe(0);
     expect(text.stdout).toContain("tracked 1 commits (digested 1, undigested 0, skipped 0)");
     expect(text.stdout).toContain(`D ${second.slice(0, 12)} ${first.slice(0, 12)}`);
+  });
+
+  test("ignores and overwrites cached digests that do not match the requested commit info", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+
+    const cached = cli(["digest", second, "--cwd", repo]);
+    expect(cached.status).toBe(0);
+    const original = JSON.parse(cached.stdout);
+    expect(original.parent).toBe(first);
+
+    const digestPath = join(root, "digests", `${second}.json`);
+    const poisoned = { ...original, parent: "0".repeat(40) };
+    writeFileSync(digestPath, `${JSON.stringify(poisoned)}\n`);
+
+    const status = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(status.status).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      summary: { tracked: 1, digested: 0, undigested: 1, skipped: 0 }
+    });
+
+    const repaired = cli(["digest", second, "--cwd", repo]);
+    expect(repaired.status).toBe(0);
+    expect(JSON.parse(repaired.stdout)).toMatchObject({ commit: second, parent: first });
+    expect(JSON.parse(readFileSync(digestPath, "utf8"))).toMatchObject({ commit: second, parent: first });
   });
 
   test("reports bad commits and unknown options", () => {
@@ -934,9 +1185,9 @@ describe("cli", () => {
     expect(unknownOption.status).toBe(1);
     expect(unknownOption.stderr).toContain("unknown option");
 
-    const noCacheStoreCommand = cli(["commits", "--no-cache", "--cwd", repo]);
+    const noCacheStoreCommand = cli(["cache", "--no-cache", "--cwd", repo]);
     expect(noCacheStoreCommand.status).toBe(1);
-    expect(noCacheStoreCommand.stderr).toContain("commits does not support --no-cache");
+    expect(noCacheStoreCommand.stderr).toContain("cache does not support --no-cache");
   });
 
   test("rejects removed commands and invalid view options", () => {
@@ -954,9 +1205,9 @@ describe("cli", () => {
     expect(identity.status).toBe(1);
     expect(identity.stderr).toContain("unknown command: identity");
 
-    const cache = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo]);
-    expect(cache.status).toBe(1);
-    expect(cache.stderr).toContain("unknown command: cache");
+    const commits = cli(["commits", "--range", `${first}..${second}`, "--cwd", repo]);
+    expect(commits.status).toBe(1);
+    expect(commits.stderr).toContain("unknown command: commits");
 
     const digestRange = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
     expect(digestRange.status).toBe(1);
@@ -1041,11 +1292,16 @@ describe("cli", () => {
   });
 
   test("ships a JSON schema for the canonical digest", () => {
-    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v4.schema.json"), "utf8"));
+    const schemaFileName = `${schemaVersion}.schema.json`;
+    const schemaPath = join(import.meta.dir, "..", "schema", schemaFileName);
+    expect(existsSync(schemaPath)).toBe(true);
+
+    const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
     expect(schema).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: expect.stringContaining(schemaFileName),
       properties: {
-        schema_version: { const: "blockcommit.digest.v4" },
+        schema_version: { const: schemaVersion },
         algorithm: { $ref: "#/$defs/algorithm" },
         symbols: { type: "array" }
       }

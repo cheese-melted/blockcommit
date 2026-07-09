@@ -8,12 +8,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build
@@ -40,6 +43,7 @@ jobs:
             "renderIdentityFrom",
             "renderIdentityTo",
             "schemaVersion",
+            "validateDigest",
             "verifyCommit",
             "verifyDigest"
           ];
@@ -50,10 +54,14 @@ jobs:
           }
 
           const require = createRequire(import.meta.url);
-          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v3.schema.json");
+          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v4.schema.json");
           const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
-          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v3") {
+          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v4") {
             throw new Error("packed schema export is invalid");
+          }
+          const validation = module.validateDigest({ schema_version: "blockcommit.digest.v4" });
+          if (validation.ok || validation.errors.length === 0) {
+            throw new Error("packed validateDigest export is invalid");
           }
           NODE
       # The published bin runs under node, not bun; exercise dist/cli.js the
@@ -71,6 +79,6 @@ jobs:
           git -C "$repo" mv a.txt b.txt
           printf 'added\n' > "$repo/a.txt"
           git -C "$repo" add . && git -C "$repo" commit -qm move
-          node dist/cli.js content HEAD --cwd "$repo" | grep -q '^M a.txt'
-          node dist/cli.js digest HEAD --cwd "$repo" --pretty > /dev/null
+          node dist/cli.js view HEAD --cwd "$repo" | grep -q '^M a.txt'
+          node dist/cli.js digest HEAD --cwd "$repo" > /dev/null
           node dist/cli.js verify --range "$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD" --cwd "$repo"

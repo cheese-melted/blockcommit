@@ -8,12 +8,9 @@ export {
 } from "./coupling";
 export {
   cachedDigestForInfo,
-  cacheCommitRange,
   commitStoreSchemaVersion,
   commitStoreView,
-  renderCommitCacheResult,
   renderCommitStoreView,
-  type CommitCacheResult,
   type CommitStoreCommit,
   type CommitStoreStatus,
   type CommitStoreSummary,
@@ -27,6 +24,11 @@ export {
   type IdentityFlow,
   type IdentityRenderOptions
 } from "./identity-view";
+export {
+  validateDigest,
+  type DigestValidationIssue,
+  type DigestValidationResult
+} from "./validate";
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
 export { digestAlgorithm, schemaVersion } from "./types";
 export type {
