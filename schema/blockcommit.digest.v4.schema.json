@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v3.schema.json",
-  "title": "blockcommit digest v3",
+  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v4.schema.json",
+  "title": "blockcommit digest v4",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "algorithm", "commit", "parent", "files", "blocks", "identity", "summary"],
+  "required": ["schema_version", "algorithm", "commit", "parent", "symbols", "files", "blocks", "identity", "summary"],
   "properties": {
-    "schema_version": { "const": "blockcommit.digest.v3" },
+    "schema_version": { "const": "blockcommit.digest.v4" },
     "algorithm": { "$ref": "#/$defs/algorithm" },
     "commit": { "$ref": "#/$defs/gitOid" },
     "parent": {
@@ -14,6 +14,10 @@
         { "$ref": "#/$defs/gitOid" },
         { "type": "null" }
       ]
+    },
+    "symbols": {
+      "type": "array",
+      "items": { "type": "string" }
     },
     "files": {
       "type": "array",
@@ -53,12 +57,14 @@
     "lineSpan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "start_line", "end_line", "line_count", "byte_start", "byte_end"],
+      "required": ["symbol", "path", "start_line", "end_line", "line_count", "total_lines", "byte_start", "byte_end"],
       "properties": {
+        "symbol": { "$ref": "#/$defs/nonNegativeInteger" },
         "path": { "type": "string" },
         "start_line": { "$ref": "#/$defs/positiveInteger" },
         "end_line": { "$ref": "#/$defs/positiveInteger" },
         "line_count": { "$ref": "#/$defs/positiveInteger" },
+        "total_lines": { "$ref": "#/$defs/nonNegativeInteger" },
         "byte_start": { "$ref": "#/$defs/nonNegativeInteger" },
         "byte_end": { "$ref": "#/$defs/nonNegativeInteger" }
       }

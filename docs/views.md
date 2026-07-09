@@ -73,7 +73,7 @@ The canonical JSON still includes derived identity events for exact or majority 
 
 ## Coupling
 
-`coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system.
+`coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system. It is a projection of the digest's canonical `symbols` and block endpoint totals.
 
 ```sh
 blockcommit coupling HEAD --pretty
@@ -99,7 +99,7 @@ Each op is:
 [kind, from_symbol_index, to_symbol_index, lines, from_total, to_total]
 ```
 
-`kind` is `move`, `insert`, or `delete`. Symbol indexes point into the `symbols` array; duplicate path strings are allowed when one pathname has different old/new identity in the same commit. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.
+`kind` is `move`, `insert`, or `delete`. Symbol indexes point into the `symbols` array; duplicate path strings are allowed when one pathname has different old/new identity in the same commit. The line totals come from digest block endpoint `total_lines`. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.
 
 ## Commit Store
 

@@ -54,6 +54,13 @@ interface BlockDraft {
   dstLines: LineRecord[] | null;
 }
 
+type DraftLineSpan = Omit<LineSpan, "symbol" | "total_lines">;
+
+type DraftLineMoveBlock =
+  | (Omit<LineMoveBlock, "src" | "dst"> & { kind: "move"; src: DraftLineSpan; dst: DraftLineSpan })
+  | (Omit<LineMoveBlock, "src" | "dst"> & { kind: "insert"; src: null; dst: DraftLineSpan })
+  | (Omit<LineMoveBlock, "src" | "dst"> & { kind: "delete"; src: DraftLineSpan; dst: null });
+
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface DigestOptions {
@@ -141,13 +148,17 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
   ];
 
   const builtBlocks = drafts.map((draft) => buildBlock(draft));
-  const blocks = builtBlocks.map((built) => built.block);
+  const draftBlocks = builtBlocks.map((built) => built.block);
+  const draftIdentity = deriveIdentity(fileDigests, draftBlocks as LineMoveBlock[]);
+  const symbolBuilder = new DigestSymbolBuilder(fileDigests, draftIdentity);
+  const blocks = draftBlocks.map((block) => decorateBlock(block, symbolBuilder));
 
   const digest: BlockCommitDigest = {
     schema_version: schemaVersion,
     algorithm: digestAlgorithm,
     commit: info.commit,
     parent: info.parent,
+    symbols: symbolBuilder.symbols,
     files: fileDigests,
     blocks,
     identity: deriveIdentity(fileDigests, blocks),
@@ -836,7 +847,7 @@ function lineId(path: string, lineNo: number): string {
 }
 
 interface BuiltBlock {
-  block: LineMoveBlock;
+  block: DraftLineMoveBlock;
 }
 
 function buildBlock(draft: BlockDraft): BuiltBlock {
@@ -857,7 +868,7 @@ function buildBlock(draft: BlockDraft): BuiltBlock {
     payload_encoding: encoded.encoding,
     ...encoded.fields
   };
-  const block: LineMoveBlock = kind === "move"
+  const block: DraftLineMoveBlock = kind === "move"
     ? { ...base, kind, src: src!, dst: dst! }
     : kind === "insert"
       ? { ...base, kind, src: null, dst: dst! }
@@ -866,7 +877,84 @@ function buildBlock(draft: BlockDraft): BuiltBlock {
   return { block };
 }
 
-function stableBlockId(kind: BlockKind, src: LineSpan | null, dst: LineSpan | null, payloadSha: string): string {
+function decorateBlock(block: DraftLineMoveBlock, builder: DigestSymbolBuilder): LineMoveBlock {
+  if (block.kind === "move") {
+    return {
+      ...block,
+      src: builder.decorateSpan("old", block.src),
+      dst: builder.decorateSpan("new", block.dst)
+    };
+  }
+  if (block.kind === "insert") {
+    return {
+      ...block,
+      src: null,
+      dst: builder.decorateSpan("new", block.dst)
+    };
+  }
+  return {
+    ...block,
+    src: builder.decorateSpan("old", block.src),
+    dst: null
+  };
+}
+
+type EndpointSide = "old" | "new";
+
+class DigestSymbolBuilder {
+  readonly symbols: string[] = [];
+  private readonly filesByPath: Map<string, ChangedFileDigest>;
+  private readonly reusedPaths: Set<string>;
+  private readonly symbolByKey = new Map<string, number>();
+
+  constructor(files: ChangedFileDigest[], identity: ReturnType<typeof deriveIdentity>) {
+    this.filesByPath = new Map(files.map((file) => [file.path, file]));
+    this.reusedPaths = new Set(
+      identity
+        .filter((event) => event.kind === "path_reused")
+        .map((event) => event.old_identity.path)
+    );
+  }
+
+  decorateSpan(side: EndpointSide, span: DraftLineSpan): LineSpan {
+    return {
+      ...span,
+      symbol: this.symbolFor(side, span.path),
+      total_lines: side === "old" ? this.oldLineCount(span.path) : this.newLineCount(span.path)
+    };
+  }
+
+  private symbolFor(side: EndpointSide, path: string): number {
+    const key = this.endpointKey(side, path);
+    const existing = this.symbolByKey.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const symbol = this.symbols.length;
+    this.symbolByKey.set(key, symbol);
+    this.symbols.push(path);
+    return symbol;
+  }
+
+  private oldLineCount(path: string): number {
+    return this.filesByPath.get(path)?.old_lines ?? 0;
+  }
+
+  private newLineCount(path: string): number {
+    return this.filesByPath.get(path)?.new_lines ?? 0;
+  }
+
+  private endpointKey(side: EndpointSide, path: string): string {
+    const file = this.filesByPath.get(path);
+    if (side === "old") {
+      return file?.new_exists === false || this.reusedPaths.has(path) ? `old:${path}` : `path:${path}`;
+    }
+    return file?.old_exists === false || this.reusedPaths.has(path) ? `new:${path}` : `path:${path}`;
+  }
+}
+
+function stableBlockId(kind: BlockKind, src: DraftLineSpan | null, dst: DraftLineSpan | null, payloadSha: string): string {
   const hash = createHash("sha256")
     .update(kind)
     .update("\0")

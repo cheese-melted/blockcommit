@@ -52,7 +52,7 @@ describe("digestCommit", () => {
     const commit = commitAll(repo, "move one line");
 
     const digest = digestCommit({ cwd: repo, commit });
-    expect(digest.schema_version).toBe("blockcommit.digest.v3");
+    expect(digest.schema_version).toBe("blockcommit.digest.v4");
     expect(JSON.parse(JSON.stringify(digest))).not.toHaveProperty("repo");
     expect(digest.algorithm).toEqual({
       name: "exact-line-sha256-identity-preserving",
@@ -71,12 +71,17 @@ describe("digestCommit", () => {
       insertions: 1,
       deletions: 1
     });
+    expect(digest.symbols).toEqual(["a.txt", "b.txt"]);
 
     const move = digest.blocks.find((block) => block.kind === "move");
     expect(move?.src?.path).toBe("a.txt");
     expect(move?.src?.start_line).toBe(2);
+    expect(move?.src?.symbol).toBe(0);
+    expect(move?.src?.total_lines).toBe(3);
     expect(move?.dst?.path).toBe("b.txt");
     expect(move?.dst?.start_line).toBe(2);
+    expect(move?.dst?.symbol).toBe(1);
+    expect(move?.dst?.total_lines).toBe(3);
     expect(move?.id).toMatch(/^bc_[0-9a-f]{16}$/);
     expect(move?.payload_encoding).toBe("utf-8");
     expect(move?.payload_text).toBe("move\n");
@@ -863,7 +868,7 @@ describe("cli", () => {
     expect(lines).toHaveLength(1);
     const digest = JSON.parse(lines[0]);
     expect(digest.commit).toBe(second);
-    expect(digest.schema_version).toBe("blockcommit.digest.v3");
+    expect(digest.schema_version).toBe("blockcommit.digest.v4");
   });
 
   test("builds the cache by default and supports --no-cache", () => {
@@ -1045,12 +1050,13 @@ describe("cli", () => {
   });
 
   test("ships a JSON schema for the canonical digest", () => {
-    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v3.schema.json"), "utf8"));
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v4.schema.json"), "utf8"));
     expect(schema).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
       properties: {
-        schema_version: { const: "blockcommit.digest.v3" },
-        algorithm: { $ref: "#/$defs/algorithm" }
+        schema_version: { const: "blockcommit.digest.v4" },
+        algorithm: { $ref: "#/$defs/algorithm" },
+        symbols: { type: "array" }
       }
     });
   });
@@ -1059,7 +1065,7 @@ describe("cli", () => {
 describe("digest schema", () => {
   test("generated digests validate against the shipped schema", () => {
     const schema = JSON.parse(
-      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v3.schema.json"), "utf8")
+      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v4.schema.json"), "utf8")
     );
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(schema);

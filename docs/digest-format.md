@@ -10,15 +10,15 @@ The digest excludes local checkout paths and other machine-local facts. Saved di
 blockcommit verify digest.json --cwd /path/to/repo
 ```
 
-The current schema is `blockcommit.digest.v3`, shipped as `schema/blockcommit.digest.v3.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v3.schema.json`.
+The current schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
 
-Digest v3 supports SHA-1-format Git repositories. SHA-256 object-format repositories are rejected before digesting because commit, parent, and blob object IDs are canonicalized as 40-hex Git OIDs.
+Digest v4 supports SHA-1-format Git repositories. SHA-256 object-format repositories are rejected before digesting because commit, parent, and blob object IDs are canonicalized as 40-hex Git OIDs.
 
 Any change that can alter block IDs, pairings, spans, block grouping, or identity events must bump the algorithm version or the schema version. Consumers should treat `schema_version` and `algorithm` as part of the canonical value.
 
 ## Block Shape
 
-The v3 schema uses a discriminated `LineMoveBlock` shape:
+The v4 schema uses a discriminated `LineMoveBlock` shape:
 
 - `kind: "move"` has both `src` and `dst` spans.
 - `kind: "insert"` has `src: null` and a `dst` span.
@@ -28,13 +28,14 @@ Coordinate semantics:
 
 - `src` spans use parent-tree line and byte coordinates.
 - `dst` spans use new-tree line and byte coordinates.
+- each non-null span has a `symbol` index and `total_lines` denominator.
 - `path:start+count` in rendered views means start at that line and include that many lines.
 
 ## Example
 
 ```jsonc
 {
-  "schema_version": "blockcommit.digest.v3",
+  "schema_version": "blockcommit.digest.v4",
   "algorithm": {
     "name": "exact-line-sha256-identity-preserving",
     "version": 2,
@@ -45,6 +46,7 @@ Coordinate semantics:
   },
   "commit": "...",
   "parent": "...",
+  "symbols": ["a.txt", "b.txt"],
   "files": [
     {
       "path": "a.txt",
@@ -67,18 +69,22 @@ Coordinate semantics:
       "id": "bc_0123456789abcdef",
       "kind": "move",
       "src": {
+        "symbol": 0,
         "path": "a.txt",
         "start_line": 2,
         "end_line": 2,
         "line_count": 1,
+        "total_lines": 3,
         "byte_start": 5,
         "byte_end": 10
       },
       "dst": {
+        "symbol": 1,
         "path": "b.txt",
         "start_line": 2,
         "end_line": 2,
         "line_count": 1,
+        "total_lines": 3,
         "byte_start": 7,
         "byte_end": 12
       },
@@ -100,7 +106,7 @@ Coordinate semantics:
 }
 ```
 
-For represented files, every changed line appears in exactly one block. Verification applies all source removals to the parent content, places payloads at destination spans, and byte-compares against the committed file.
+For represented files, every changed line appears in exactly one block. Verification applies all source removals to the parent content, places payloads at destination spans, and byte-compares against the committed file. Coupling uses the same `symbols` and span `total_lines` fields to compute relation denominators.
 
 ## Pairing Algorithm
 

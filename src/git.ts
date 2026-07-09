@@ -157,7 +157,7 @@ function ensureBgitCache(gitDir: string): string {
 function assertSha1ObjectFormat(repo: string): void {
   const objectFormat = gitText(repo, ["rev-parse", "--show-object-format"]).trim();
   if (objectFormat !== "sha1") {
-    throw new Error(`blockcommit digest v3 only supports sha1 Git object format, got ${objectFormat}`);
+    throw new Error(`blockcommit digest v4 only supports sha1 Git object format, got ${objectFormat}`);
   }
 }
 

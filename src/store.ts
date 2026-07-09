@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { couplingPayload } from "./coupling";
 import { computeDigestFor } from "./digest";
 import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
-import { type BlockCommitDigest } from "./types";
+import { schemaVersion, type BlockCommitDigest } from "./types";
 
 export const commitStoreSchemaVersion = "blockcommit.commit-store.v1";
 
@@ -108,8 +108,9 @@ export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
   };
   saveIndex(paths, index);
 
-  if (hasCachedCommit(paths, info.commit)) {
-    return JSON.parse(readFileSync(objectPath(paths.digests, info.commit), "utf8")) as BlockCommitDigest;
+  const cached = readCachedDigest(paths, info.commit);
+  if (cached !== null) {
+    return cached;
   }
 
   const digest = computeDigestFor(info).digest;
@@ -188,7 +189,16 @@ function toCommitInfo(info: CommitGraphInfo): CommitInfo {
 }
 
 function hasCachedCommit(paths: StorePaths, commit: string): boolean {
-  return existsSync(objectPath(paths.digests, commit)) && existsSync(objectPath(paths.coupling, commit));
+  return readCachedDigest(paths, commit) !== null && existsSync(objectPath(paths.coupling, commit));
+}
+
+function readCachedDigest(paths: StorePaths, commit: string): BlockCommitDigest | null {
+  const path = objectPath(paths.digests, commit);
+  if (!existsSync(path) || !existsSync(objectPath(paths.coupling, commit))) {
+    return null;
+  }
+  const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
+  return digest.schema_version === schemaVersion ? digest : null;
 }
 
 function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: BlockCommitDigest): void {

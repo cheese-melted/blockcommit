@@ -1,5 +1,5 @@
 export const nullPath = "/dev/null";
-export const schemaVersion = "blockcommit.digest.v3";
+export const schemaVersion = "blockcommit.digest.v4";
 export const digestAlgorithm = {
   name: "exact-line-sha256-identity-preserving",
   version: 2,
@@ -18,10 +18,12 @@ export type LineDigestStatus = "represented" | "unsupported";
 export type UnsupportedReason = "binary" | "mode_only" | "submodule" | "filetype" | "unparsed_diff";
 
 export interface LineSpan {
+  symbol: number;
   path: string;
   start_line: number;
   end_line: number;
   line_count: number;
+  total_lines: number;
   byte_start: number;
   byte_end: number;
 }
@@ -111,6 +113,7 @@ export interface BlockCommitDigest {
   algorithm: DigestAlgorithm;
   commit: string;
   parent: string | null;
+  symbols: string[];
   files: ChangedFileDigest[];
   blocks: LineMoveBlock[];
   identity: IdentityEvent[];

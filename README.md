@@ -83,7 +83,7 @@ By default, commands that compute commit digests read from and write to `.git/.b
 
 `identity [commit] [--no-cache]`, `identity-from [commit] [--pretty] [--no-cache]`, and `identity-to [commit] [--pretty] [--no-cache]` print layer 2: file-continuity views over cross-path moves.
 
-`coupling [commit] [--pretty] [--no-cache]` and `coupling --range <rev-range> --format jsonl [--no-cache]` print layer 3: a lean transition payload for VPEL. It preserves local symbols and the ordered operation list, but leaves relation mapping and score reduction to VPEL.
+`coupling [commit] [--pretty] [--no-cache]` and `coupling --range <rev-range> --format jsonl [--no-cache]` print layer 3: a lean projection of the digest's symbols and ordered block list for VPEL. It leaves relation mapping and score reduction to VPEL.
 
 `commits [--range <rev-range>]` persists and prints the commit graph view: which commits are digested, undigested, or skipped. `cache [--range <rev-range>]` digests undigested non-merge commits into the persistent store.
 
@@ -119,7 +119,7 @@ This answers: where did old file content end up, and where did new file content 
 
 ### 3. Coupling Handoff
 
-Coupling is the compact machine handoff for downstream relation systems:
+Coupling is the compact machine handoff for downstream relation systems. It is projected directly from the digest's canonical `symbols` and block endpoints:
 
 ```json
 {
@@ -140,7 +140,7 @@ Each op is:
 [kind, from_symbol_index, to_symbol_index, lines, from_total, to_total]
 ```
 
-The totals are integer denominators. VPEL can compute percentages exactly, map ordered ops into relation events, and reduce those events into coupling/adjacency scores.
+The totals are integer denominators copied from digest block endpoint `total_lines`. VPEL can compute percentages exactly, map ordered ops into relation events, and reduce those events into coupling/adjacency scores.
 
 For Git reads, blockcommit normalizes the selected repo to a tiny `.git/.bgit_cache` worktree pointer. The default selected repo is the current working repo; `--cwd` only overrides that. You can point it at a worktree or directly at its `.git` directory, and blockcommit keeps that path handling internal without checking out files.
 
@@ -179,6 +179,6 @@ U 222222222222 111111111111
 
 ## Compatibility
 
-The current canonical schema is `blockcommit.digest.v3`, shipped as `schema/blockcommit.digest.v3.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v3.schema.json`.
+The current canonical schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
 
 The digest intentionally excludes local checkout paths and other machine-local facts. Two users digesting the same commit from different checkout directories should get byte-identical JSON after normal JSON serialization.
