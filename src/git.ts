@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -9,6 +10,12 @@ export interface CommitInfo {
   commit: string;
   parent: string | null;
   diffBase: string;
+}
+
+export interface CommitGraphInfo {
+  repo: string;
+  commit: string;
+  parents: string[];
 }
 
 export interface FilePair {
@@ -37,7 +44,7 @@ interface RawEntry {
 }
 
 export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
-  const repo = resolve(gitText(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  const repo = resolveRepoCwd(cwd);
   assertSha1ObjectFormat(repo);
   const commit = gitText(repo, ["rev-parse", "--verify", `${commitish}^{commit}`]).trim();
   const revLine = gitText(repo, ["rev-list", "--parents", "-n", "1", commit]).trim();
@@ -56,8 +63,9 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
 }
 
 export function tryResolveCommit(cwd: string, commitish: string): string | null {
+  const repo = tryResolveRepoCwd(cwd) ?? cwd;
   const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${commitish}^{commit}`], {
-    cwd,
+    cwd: repo,
     encoding: "utf8"
   });
   return result.status === 0 ? result.stdout.trim() : null;
@@ -66,7 +74,7 @@ export function tryResolveCommit(cwd: string, commitish: string): string | null 
 // Resolves the repo and every commit's parent in two git calls total, so
 // range walks don't pay per-commit rev-parse/rev-list spawns.
 export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
-  const repo = resolve(gitText(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  const repo = resolveRepoCwd(cwd);
   assertSha1ObjectFormat(repo);
   return gitText(repo, ["rev-list", "--no-merges", "--reverse", "--parents", range])
     .split("\n")
@@ -76,6 +84,74 @@ export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
       const [commit, ...parents] = line.split(/\s+/);
       return { repo, commit, parent: parents[0] ?? null, diffBase: parents[0] ?? emptyTree };
     });
+}
+
+export function listCommitGraphInfos(cwd: string, range: string): CommitGraphInfo[] {
+  const repo = resolveRepoCwd(cwd);
+  assertSha1ObjectFormat(repo);
+  return gitText(repo, ["rev-list", "--reverse", "--parents", range])
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [commit, ...parents] = line.split(/\s+/);
+      return { repo, commit, parents };
+    });
+}
+
+export function resolveRepoCacheCwd(cwd: string): string {
+  const repo = resolveRepoCwd(cwd);
+  assertSha1ObjectFormat(repo);
+  return repo;
+}
+
+function resolveRepoCwd(cwd: string): string {
+  const repo = tryResolveRepoCwd(cwd);
+  if (repo !== null) {
+    return repo;
+  }
+  return ensureBgitCache(resolve(gitText(cwd, ["rev-parse", "--absolute-git-dir"]).trim()));
+}
+
+function tryResolveRepoCwd(cwd: string): string | null {
+  const direct = spawnSync("git", ["rev-parse", "--absolute-git-dir"], {
+    cwd,
+    encoding: "utf8"
+  });
+  if (direct.status === 0) {
+    return ensureBgitCache(resolve(direct.stdout.trim()));
+  }
+
+  const gitDir = resolve(cwd);
+  if (!isPointedGitDir(gitDir)) {
+    return null;
+  }
+  return ensureBgitCache(gitDir);
+}
+
+function isPointedGitDir(path: string): boolean {
+  if (!existsSync(path)) {
+    return false;
+  }
+  const gitDir = spawnSync("git", ["rev-parse", "--git-dir"], {
+    cwd: path,
+    encoding: "utf8"
+  });
+  if (gitDir.status !== 0 || gitDir.stdout.trim() !== ".") {
+    return false;
+  }
+  const bare = spawnSync("git", ["rev-parse", "--is-bare-repository"], {
+    cwd: path,
+    encoding: "utf8"
+  });
+  return bare.status === 0 && bare.stdout.trim() === "false";
+}
+
+function ensureBgitCache(gitDir: string): string {
+  const cache = resolve(gitDir, ".bgit_cache");
+  mkdirSync(cache, { recursive: true });
+  writeFileSync(resolve(cache, ".git"), `gitdir: ${gitDir}\n`);
+  return cache;
 }
 
 function assertSha1ObjectFormat(repo: string): void {

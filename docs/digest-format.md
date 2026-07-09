@@ -4,7 +4,7 @@
 
 ## Canonicality
 
-The digest excludes local checkout paths and other machine-local facts. Saved digests do not identify a checkout, so verifying a JSON file requires an explicit repository:
+The digest excludes local checkout paths and other machine-local facts. Saved digests do not identify a checkout, so verifying a JSON file requires an explicit repository unless you run the command from that repo:
 
 ```sh
 blockcommit verify digest.json --cwd /path/to/repo

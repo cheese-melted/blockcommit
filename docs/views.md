@@ -78,6 +78,7 @@ The canonical JSON still includes derived identity events for exact or majority 
 ```sh
 blockcommit coupling HEAD --pretty
 blockcommit coupling --range v1.0..main --format jsonl
+blockcommit coupling HEAD --no-cache
 ```
 
 ```json
@@ -85,12 +86,9 @@ blockcommit coupling --range v1.0..main --format jsonl
   "schema_version": "blockcommit.coupling.v1",
   "commit": "abc123",
   "parent": "def456",
-  "symbols": {
-    "s1": "a.ts",
-    "s2": "b.ts"
-  },
+  "symbols": ["a.ts", "b.ts"],
   "ops": [
-    ["move", "s1", "s2", 6, 6, 8]
+    ["move", 0, 1, 6, 6, 8]
   ]
 }
 ```
@@ -98,7 +96,18 @@ blockcommit coupling --range v1.0..main --format jsonl
 Each op is:
 
 ```text
-[kind, from_symbol, to_symbol, lines, from_total, to_total]
+[kind, from_symbol_index, to_symbol_index, lines, from_total, to_total]
 ```
 
-`kind` is `move`, `insert`, or `delete`. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.
+`kind` is `move`, `insert`, or `delete`. Symbol indexes point into the `symbols` array; duplicate path strings are allowed when one pathname has different old/new identity in the same commit. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.
+
+## Commit Store
+
+`commits` and `cache` are the persistent view over Git history:
+
+```sh
+blockcommit commits --range v1.0..HEAD
+blockcommit cache --range v1.0..HEAD
+```
+
+Digest-producing commands fill the store by default. `commits` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. `cache` explicitly backfills the undigested non-merge commits and writes both canonical digest records and coupling records under `.git/.bgit_cache/blockcommit`. Add `--no-cache` to digest/content/identity/coupling commands to bypass store reads and writes for that run.

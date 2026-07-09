@@ -16,7 +16,12 @@ For broader reconstruction coverage, run:
 
 ```sh
 blockcommit verify --range <rev-range> --cwd <repo>
+blockcommit commits --range <rev-range> --cwd <repo>
+blockcommit cache --range <rev-range> --cwd <repo>
+blockcommit digest --range <rev-range> --cwd <repo> --format jsonl --no-cache
 ```
+
+When run inside the repo, `--cwd` is optional.
 
 ## Library
 
@@ -29,11 +34,13 @@ import {
   renderIdentity,
   renderIdentityFrom,
   renderIdentityTo,
+  cacheCommitRange,
+  commitStoreView,
   verifyCommit,
   verifyDigest
 } from "blockcommit";
 
-const digest = digestCommit({ cwd: "/path/to/repo", commit: "HEAD" });
+const digest = digestCommit({ commit: "HEAD" });
 
 console.log(renderContent(digest));
 console.log(renderIdentity(digest));
@@ -41,8 +48,10 @@ console.log(renderIdentityFrom(digest));
 console.log(renderIdentityTo(digest));
 console.log(identityFlows(digest));
 console.log(couplingPayload(digest));
+console.log(commitStoreView("/path/to/repo", "HEAD"));
+console.log(cacheCommitRange("/path/to/repo", "HEAD"));
 
-const result = verifyCommit({ cwd: "/path/to/repo", commit: "HEAD" });
+const result = verifyCommit({ commit: "HEAD" });
 const saved = verifyDigest({ cwd: "/path/to/repo", digest });
 ```
 

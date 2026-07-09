@@ -3,15 +3,15 @@ import { type BlockCommitDigest } from "./types";
 export const couplingSchemaVersion = "blockcommit.coupling.v1";
 
 export type CouplingOp =
-  | ["move", string, string, number, number, number]
-  | ["insert", null, string, number, 0, number]
-  | ["delete", string, null, number, number, 0];
+  | ["move", number, number, number, number, number]
+  | ["insert", null, number, number, 0, number]
+  | ["delete", number, null, number, number, 0];
 
 export interface CouplingPayload {
   schema_version: typeof couplingSchemaVersion;
   commit: string;
   parent: string | null;
-  symbols: Record<string, string>;
+  symbols: string[];
   ops: CouplingOp[];
 }
 
@@ -55,10 +55,10 @@ export function couplingPayload(digest: BlockCommitDigest): CouplingPayload {
 }
 
 class SymbolBuilder {
-  readonly symbols: Record<string, string> = {};
+  readonly symbols: string[] = [];
   private readonly filesByPath: Map<string, { old_lines: number; new_lines: number; old_exists: boolean; new_exists: boolean }>;
   private readonly reusedPaths: Set<string>;
-  private readonly symbolByKey = new Map<string, string>();
+  private readonly symbolByKey = new Map<string, number>();
 
   constructor(digest: BlockCommitDigest) {
     this.filesByPath = new Map(digest.files.map((file) => [file.path, file]));
@@ -69,16 +69,16 @@ class SymbolBuilder {
     );
   }
 
-  symbolFor(side: EndpointSide, path: string): string {
+  symbolFor(side: EndpointSide, path: string): number {
     const key = this.endpointKey(side, path);
     const existing = this.symbolByKey.get(key);
     if (existing !== undefined) {
       return existing;
     }
 
-    const symbol = `s${this.symbolByKey.size + 1}`;
+    const symbol = this.symbols.length;
     this.symbolByKey.set(key, symbol);
-    this.symbols[symbol] = path;
+    this.symbols.push(path);
     return symbol;
   }
 

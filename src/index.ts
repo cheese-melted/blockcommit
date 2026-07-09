@@ -7,6 +7,19 @@ export {
   type CouplingPayload
 } from "./coupling";
 export {
+  cachedDigestForInfo,
+  cacheCommitRange,
+  commitStoreSchemaVersion,
+  commitStoreView,
+  renderCommitCacheResult,
+  renderCommitStoreView,
+  type CommitCacheResult,
+  type CommitStoreCommit,
+  type CommitStoreStatus,
+  type CommitStoreSummary,
+  type CommitStoreView
+} from "./store";
+export {
   identityFlows,
   renderIdentity,
   renderIdentityFrom,

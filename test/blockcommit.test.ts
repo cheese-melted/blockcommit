@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -545,14 +545,10 @@ describe("identity", () => {
     expect(couplingPayload(digest)).toMatchObject({
       commit,
       parent: expect.any(String),
-      symbols: {
-        s1: "a.ts",
-        s2: "b.ts",
-        s3: "a.ts"
-      },
+      symbols: ["a.ts", "b.ts", "a.ts"],
       ops: [
-        ["move", "s1", "s2", 3, 3, 3],
-        ["insert", null, "s3", 2, 0, 2]
+        ["move", 0, 1, 3, 3, 3],
+        ["insert", null, 2, 2, 0, 2]
       ]
     });
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
@@ -807,11 +803,8 @@ describe("cli", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       commit,
-      symbols: {
-        s1: "a.ts",
-        s2: "b.ts"
-      },
-      ops: [["move", "s1", "s2", 2, 2, 2]]
+      symbols: ["a.ts", "b.ts"],
+      ops: [["move", 0, 1, 2, 2, 2]]
     });
 
     const pretty = cli(["coupling", commit, "--cwd", repo, "--pretty"]);
@@ -832,7 +825,28 @@ describe("cli", () => {
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0])).toMatchObject({
       commit: second,
-      ops: [["insert", null, "s1", 1, 0, 2]]
+      ops: [["insert", null, 0, 1, 0, 2]]
+    });
+  });
+
+  test("supports pointing --cwd at a .git directory", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const commit = commitAll(repo, "two");
+    const gitDir = join(repo, ".git");
+
+    const worktreeResult = cli(["coupling", commit, "--cwd", repo]);
+    expect(worktreeResult.status).toBe(0);
+    expect(existsSync(join(gitDir, ".bgit_cache", ".git"))).toBe(true);
+
+    const result = cli(["coupling", commit, "--cwd", gitDir]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      commit,
+      symbols: ["file.txt"],
+      ops: [["insert", null, 0, 1, 0, 2]]
     });
   });
 
@@ -852,6 +866,69 @@ describe("cli", () => {
     expect(digest.schema_version).toBe("blockcommit.digest.v3");
   });
 
+  test("builds the cache by default and supports --no-cache", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const commit = commitAll(repo, "two");
+    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+
+    const uncached = cli(["content", commit, "--cwd", repo, "--no-cache"]);
+    expect(uncached.status).toBe(0);
+    expect(existsSync(root)).toBe(false);
+
+    const cached = cli(["content", commit, "--cwd", repo]);
+    expect(cached.status).toBe(0);
+    expect(existsSync(join(root, "index.json"))).toBe(true);
+    expect(existsSync(join(root, "digests", `${commit}.json`))).toBe(true);
+    expect(existsSync(join(root, "coupling", `${commit}.json`))).toBe(true);
+
+    const view = cli(["commits", "--range", `${commit}^..${commit}`, "--cwd", repo, "--format", "json"]);
+    expect(view.status).toBe(0);
+    expect(JSON.parse(view.stdout)).toMatchObject({
+      summary: { tracked: 1, digested: 1, undigested: 0, skipped: 0 }
+    });
+  });
+
+  test("tracks and caches commit store state", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+
+    const tracked = cli(["commits", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(tracked.status).toBe(0);
+    expect(JSON.parse(tracked.stdout)).toMatchObject({
+      schema_version: "blockcommit.commit-store.v1",
+      summary: { tracked: 1, digested: 0, undigested: 1, skipped: 0 },
+      commits: [{ commit: second, status: "undigested" }]
+    });
+
+    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+    expect(existsSync(join(root, "index.json"))).toBe(true);
+
+    const cached = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(cached.status).toBe(0);
+    expect(JSON.parse(cached.stdout)).toMatchObject({
+      cached: 1,
+      summary: { tracked: 1, digested: 1, undigested: 0, skipped: 0 },
+      commits: [{ commit: second, status: "digested" }]
+    });
+    expect(existsSync(join(root, "digests", `${second}.json`))).toBe(true);
+    expect(existsSync(join(root, "coupling", `${second}.json`))).toBe(true);
+
+    const repeated = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(repeated.status).toBe(0);
+    expect(JSON.parse(repeated.stdout).cached).toBe(0);
+
+    const text = cli(["commits", "--range", `${first}..${second}`, "--cwd", repo]);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toContain("tracked 1 commits (digested 1, undigested 0, skipped 0)");
+    expect(text.stdout).toContain(`D ${second.slice(0, 12)} ${first.slice(0, 12)}`);
+  });
+
   test("reports bad commits and unknown options", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "base\n");
@@ -864,6 +941,10 @@ describe("cli", () => {
     const unknownOption = cli(["digest", "--definitely-unknown"], repo);
     expect(unknownOption.status).toBe(1);
     expect(unknownOption.stderr).toContain("unknown option");
+
+    const noCacheStoreCommand = cli(["commits", "--no-cache", "--cwd", repo]);
+    expect(noCacheStoreCommand.status).toBe(1);
+    expect(noCacheStoreCommand.stderr).toContain("commits does not support --no-cache");
   });
 
   test("rejects --pretty where it has no effect", () => {
