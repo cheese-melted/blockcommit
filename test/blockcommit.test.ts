@@ -759,7 +759,7 @@ describe("cli", () => {
     writeFileSync(join(repo, "file.txt"), "base\nnext\n");
     const commit = commitAll(repo, "add line");
 
-    const result = cli(["content", commit, "--cwd", repo]);
+    const result = cli(["view", commit, "--cwd", repo]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^\+ file\.txt:2\+1$/m);
   });
@@ -773,26 +773,17 @@ describe("cli", () => {
     writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
     const commit = commitAll(repo, "rename without git mv");
 
-    const result = cli(["identity", commit, "--cwd", repo]);
+    const result = cli(["view", commit, "--cwd", repo, "--view", "identity"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("old.txt:2 -> new.txt:2 (2)\n");
 
-    const from = cli(["identity-from", commit, "--cwd", repo]);
+    const from = cli(["view", commit, "--cwd", repo, "--view", "identity-from"]);
     expect(from.status).toBe(0);
     expect(from.stdout).toBe("from old.txt:2 => new.txt (2/2, 100%)\n");
 
-    const prettyFrom = cli(["identity-from", commit, "--cwd", repo, "--pretty"]);
-    expect(prettyFrom.status).toBe(0);
-    expect(prettyFrom.stdout).toBe("  old.txt:2  =>  new.txt  (2/2, 100%)\n");
-
-    const to = cli(["identity-to", commit, "--cwd", repo]);
+    const to = cli(["view", commit, "--cwd", repo, "--view", "identity-to"]);
     expect(to.status).toBe(0);
     expect(to.stdout).toBe("to new.txt:2 <= old.txt (2/2, 100%)\n");
-
-    const prettyTo = cli(["identity-to", commit, "--cwd", repo, "--pretty"]);
-    expect(prettyTo.status).toBe(0);
-    expect(prettyTo.stdout).toBe("  new.txt:2  <=  old.txt  (2/2, 100%)\n");
-
   });
 
   test("prints ordered coupling payloads", () => {
@@ -804,17 +795,13 @@ describe("cli", () => {
     writeFileSync(join(repo, "b.ts"), "one()\ntwo()\n");
     const commit = commitAll(repo, "move a to b");
 
-    const result = cli(["coupling", commit, "--cwd", repo]);
+    const result = cli(["view", commit, "--cwd", repo, "--view", "coupling"]);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       commit,
       symbols: ["a.ts", "b.ts"],
       ops: [["move", 0, 1, 2, 2, 2]]
     });
-
-    const pretty = cli(["coupling", commit, "--cwd", repo, "--pretty"]);
-    expect(pretty.status).toBe(0);
-    expect(pretty.stdout).toContain("\n  \"ops\": [\n");
   });
 
   test("prints coupling ranges as JSONL", () => {
@@ -824,7 +811,7 @@ describe("cli", () => {
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
 
-    const result = cli(["coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
+    const result = cli(["view", "--view", "coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
     expect(result.status).toBe(0);
     const lines = result.stdout.trimEnd().split("\n");
     expect(lines).toHaveLength(1);
@@ -842,11 +829,11 @@ describe("cli", () => {
     const commit = commitAll(repo, "two");
     const gitDir = join(repo, ".git");
 
-    const worktreeResult = cli(["coupling", commit, "--cwd", repo]);
+    const worktreeResult = cli(["view", commit, "--cwd", repo, "--view", "coupling"]);
     expect(worktreeResult.status).toBe(0);
     expect(existsSync(join(gitDir, ".bgit_cache", ".git"))).toBe(true);
 
-    const result = cli(["coupling", commit, "--cwd", gitDir]);
+    const result = cli(["view", commit, "--cwd", gitDir, "--view", "coupling"]);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       commit,
@@ -879,11 +866,11 @@ describe("cli", () => {
     const commit = commitAll(repo, "two");
     const root = join(repo, ".git", ".bgit_cache", "blockcommit");
 
-    const uncached = cli(["content", commit, "--cwd", repo, "--no-cache"]);
+    const uncached = cli(["view", commit, "--cwd", repo, "--no-cache"]);
     expect(uncached.status).toBe(0);
     expect(existsSync(root)).toBe(false);
 
-    const cached = cli(["content", commit, "--cwd", repo]);
+    const cached = cli(["view", commit, "--cwd", repo]);
     expect(cached.status).toBe(0);
     expect(existsSync(join(root, "index.json"))).toBe(true);
     expect(existsSync(join(root, "digests", `${commit}.json`))).toBe(true);
@@ -914,7 +901,7 @@ describe("cli", () => {
     const root = join(repo, ".git", ".bgit_cache", "blockcommit");
     expect(existsSync(join(root, "index.json"))).toBe(true);
 
-    const cached = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    const cached = cli(["commits", "--cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(cached.status).toBe(0);
     expect(JSON.parse(cached.stdout)).toMatchObject({
       cached: 1,
@@ -924,7 +911,7 @@ describe("cli", () => {
     expect(existsSync(join(root, "digests", `${second}.json`))).toBe(true);
     expect(existsSync(join(root, "coupling", `${second}.json`))).toBe(true);
 
-    const repeated = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    const repeated = cli(["commits", "--cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(repeated.status).toBe(0);
     expect(JSON.parse(repeated.stdout).cached).toBe(0);
 
@@ -952,40 +939,44 @@ describe("cli", () => {
     expect(noCacheStoreCommand.stderr).toContain("commits does not support --no-cache");
   });
 
-  test("rejects --pretty where it has no effect", () => {
+  test("rejects removed commands and invalid view options", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "one\n");
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
 
-    const content = cli(["content", second, "--cwd", repo, "--pretty"]);
+    const content = cli(["content", second, "--cwd", repo]);
     expect(content.status).toBe(1);
-    expect(content.stderr).toContain("content does not support --pretty");
+    expect(content.stderr).toContain("unknown command: content");
 
-    const identity = cli(["identity", second, "--cwd", repo, "--pretty"]);
+    const identity = cli(["identity", second, "--cwd", repo]);
     expect(identity.status).toBe(1);
-    expect(identity.stderr).toContain("identity does not support --pretty");
+    expect(identity.stderr).toContain("unknown command: identity");
+
+    const cache = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo]);
+    expect(cache.status).toBe(1);
+    expect(cache.stderr).toContain("unknown command: cache");
 
     const digestRange = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
     expect(digestRange.status).toBe(1);
-    expect(digestRange.stderr).toContain("digest --range does not support --pretty");
+    expect(digestRange.stderr).toContain("unknown option: --pretty");
 
     const digestJsonl = cli(["digest", second, "--cwd", repo, "--format", "jsonl", "--pretty"]);
     expect(digestJsonl.status).toBe(1);
-    expect(digestJsonl.stderr).toContain("digest --format jsonl does not support --pretty");
+    expect(digestJsonl.stderr).toContain("unknown option: --pretty");
 
-    const couplingRange = cli(["coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    const couplingRange = cli(["view", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
     expect(couplingRange.status).toBe(1);
-    expect(couplingRange.stderr).toContain("coupling --range does not support --pretty");
+    expect(couplingRange.stderr).toContain("view --range is only supported with --view coupling");
 
-    const couplingJsonl = cli(["coupling", second, "--cwd", repo, "--format", "jsonl", "--pretty"]);
+    const couplingJsonl = cli(["view", second, "--cwd", repo, "--view", "coupling", "--format", "jsonl"]);
     expect(couplingJsonl.status).toBe(1);
-    expect(couplingJsonl.stderr).toContain("coupling --format jsonl does not support --pretty");
+    expect(couplingJsonl.stderr).toContain("view --view coupling --format jsonl requires --range");
 
     const verify = cli(["verify", second, "--cwd", repo, "--pretty"]);
     expect(verify.status).toBe(1);
-    expect(verify.stderr).toContain("verify does not support --pretty without --format json");
+    expect(verify.stderr).toContain("unknown option: --pretty");
   });
 
   test("verifies digest JSON files against their referenced commit", () => {

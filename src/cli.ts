@@ -12,25 +12,22 @@ import { type BlockCommitDigest, type VerifyResult } from "./types";
 import { type CommitInfo } from "./git";
 
 type Format = "json" | "jsonl";
+type ViewType = "content" | "identity" | "identity-from" | "identity-to" | "coupling";
 
 interface CliOptions {
   command:
     | "digest"
-    | "content"
-    | "identity"
-    | "identity-from"
-    | "identity-to"
-    | "coupling"
+    | "view"
     | "commits"
-    | "cache"
     | "verify"
     | "help";
   commit: string;
   cwd?: string;
   format?: Format;
-  pretty: boolean;
   range?: string;
   cache: boolean;
+  fillCache: boolean;
+  view: ViewType;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -46,31 +43,8 @@ async function main(argv: string[]): Promise<number> {
   if (options.command === "commits") {
     return runCommits(options);
   }
-  if (options.command === "cache") {
-    return runCache(options);
-  }
-  if (options.command === "coupling") {
-    return runCoupling(options);
-  }
-  if (options.command === "content") {
-    const digest = digestForCommit(options);
-    process.stdout.write(renderContent(digest));
-    return 0;
-  }
-  if (options.command === "identity") {
-    const digest = digestForCommit(options);
-    process.stdout.write(renderIdentity(digest));
-    return 0;
-  }
-  if (options.command === "identity-from") {
-    const digest = digestForCommit(options);
-    process.stdout.write(renderIdentityFrom(digest, { pretty: options.pretty }));
-    return 0;
-  }
-  if (options.command === "identity-to") {
-    const digest = digestForCommit(options);
-    process.stdout.write(renderIdentityTo(digest, { pretty: options.pretty }));
-    return 0;
+  if (options.command === "view") {
+    return runView(options);
   }
   if (options.command === "digest" && options.range !== undefined) {
     return runDigestRange(options);
@@ -84,9 +58,33 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  process.stdout.write(JSON.stringify(digest, null, options.pretty ? 2 : 0));
+  process.stdout.write(JSON.stringify(digest));
   process.stdout.write("\n");
   return 0;
+}
+
+function runView(options: CliOptions): number {
+  if (options.view === "coupling") {
+    return runCoupling(options);
+  }
+  const digest = digestForCommit(options);
+  if (options.view === "content") {
+    process.stdout.write(renderContent(digest));
+    return 0;
+  }
+  if (options.view === "identity") {
+    process.stdout.write(renderIdentity(digest));
+    return 0;
+  }
+  if (options.view === "identity-from") {
+    process.stdout.write(renderIdentityFrom(digest));
+    return 0;
+  }
+  if (options.view === "identity-to") {
+    process.stdout.write(renderIdentityTo(digest));
+    return 0;
+  }
+  throw new Error(`unknown view: ${options.view satisfies never}`);
 }
 
 function digestForCommit(options: CliOptions): BlockCommitDigest {
@@ -101,9 +99,12 @@ function digestForInfo(info: CommitInfo, options: CliOptions): BlockCommitDigest
 }
 
 function runCommits(options: CliOptions): number {
+  if (options.fillCache) {
+    return runCache(options);
+  }
   const view = commitStoreView(options.cwd ?? process.cwd(), options.range ?? "HEAD");
   if (options.format === "json") {
-    process.stdout.write(JSON.stringify(view, null, options.pretty ? 2 : 0));
+    process.stdout.write(JSON.stringify(view));
     process.stdout.write("\n");
     return 0;
   }
@@ -115,7 +116,7 @@ function runCommits(options: CliOptions): number {
 function runCache(options: CliOptions): number {
   const result = cacheCommitRange(options.cwd ?? process.cwd(), options.range ?? "HEAD");
   if (options.format === "json") {
-    process.stdout.write(JSON.stringify(result, null, options.pretty ? 2 : 0));
+    process.stdout.write(JSON.stringify(result));
     process.stdout.write("\n");
     return 0;
   }
@@ -130,7 +131,7 @@ function runCoupling(options: CliOptions): number {
   }
 
   const digest = digestForCommit(options);
-  process.stdout.write(JSON.stringify(couplingPayload(digest), null, options.pretty ? 2 : 0));
+  process.stdout.write(JSON.stringify(couplingPayload(digest)));
   process.stdout.write("\n");
   return 0;
 }
@@ -138,7 +139,7 @@ function runCoupling(options: CliOptions): number {
 function runCouplingRange(options: CliOptions): number {
   const format = options.format ?? "jsonl";
   if (format !== "jsonl") {
-    throw new Error("coupling --range only supports --format jsonl");
+    throw new Error("view --view coupling --range only supports --format jsonl");
   }
   for (const info of listCommitInfos(options.cwd ?? process.cwd(), options.range!)) {
     process.stdout.write(JSON.stringify(couplingPayload(digestForInfo(info, options))));
@@ -195,7 +196,7 @@ function runVerify(options: CliOptions): number {
 
   const failures = results.filter((result) => !result.ok).length;
   if (options.format === "json") {
-    process.stdout.write(JSON.stringify(results.length === 1 ? results[0] : results, null, options.pretty ? 2 : 0));
+    process.stdout.write(JSON.stringify(results.length === 1 ? results[0] : results));
     process.stdout.write("\n");
   } else if (infos.length > 1) {
     process.stdout.write(`verified ${infos.length - failures}/${infos.length} commits\n`);
@@ -214,7 +215,7 @@ function runVerifyDigest(options: CliOptions): number {
     }
     : verifyDigest({ cwd: options.cwd, digest });
   if (options.format === "json") {
-    process.stdout.write(JSON.stringify(result, null, options.pretty ? 2 : 0));
+    process.stdout.write(JSON.stringify(result));
     process.stdout.write("\n");
     return result.ok ? 0 : 1;
   }
@@ -239,18 +240,13 @@ function parseArgs(argv: string[]): CliOptions {
   const args = [...argv];
   const first = args.shift();
   if (first === undefined || first === "help" || first === "--help" || first === "-h") {
-    return { command: "help", commit: "HEAD", format: "json", pretty: false, cache: true };
+    return { command: "help", commit: "HEAD", format: "json", cache: true, fillCache: false, view: "content" };
   }
 
   if (
     first !== "digest" &&
-    first !== "content" &&
-    first !== "identity" &&
-    first !== "identity-from" &&
-    first !== "identity-to" &&
-    first !== "coupling" &&
+    first !== "view" &&
     first !== "commits" &&
-    first !== "cache" &&
     first !== "verify"
   ) {
     throw new Error(`unknown command: ${first}`);
@@ -259,19 +255,20 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command: first,
     commit: "HEAD",
-    pretty: false,
-    cache: true
+    cache: true,
+    fillCache: false,
+    view: "content"
   };
   let sawCommit = false;
 
   while (args.length > 0) {
     const arg = args.shift();
-    if (arg === "--pretty") {
-      options.pretty = true;
-      continue;
-    }
     if (arg === "--no-cache") {
       options.cache = false;
+      continue;
+    }
+    if (arg === "--cache") {
+      options.fillCache = true;
       continue;
     }
     if (arg === "--cwd" || arg === "-C") {
@@ -298,6 +295,14 @@ function parseArgs(argv: string[]): CliOptions {
       options.format = parseFormat(arg.slice("--format=".length));
       continue;
     }
+    if (arg === "--view") {
+      options.view = parseView(requireValue(args, arg));
+      continue;
+    }
+    if (arg?.startsWith("--view=")) {
+      options.view = parseView(arg.slice("--view=".length));
+      continue;
+    }
     if (arg?.startsWith("-")) {
       throw new Error(`unknown option: ${arg}`);
     }
@@ -311,44 +316,40 @@ function parseArgs(argv: string[]): CliOptions {
   if (options.range !== undefined && sawCommit) {
     throw new Error(`${options.command} takes either a commit or --range, not both`);
   }
-  if ((options.command === "commits" || options.command === "cache") && sawCommit) {
+  if (options.command === "commits" && sawCommit) {
     throw new Error(`${options.command} does not take a commit; use --range to choose history`);
   }
-  if (isViewCommand(options.command) && options.range !== undefined) {
-    throw new Error(`${options.command} does not support --range`);
+  if (options.command === "view" && options.range !== undefined && options.view !== "coupling") {
+    throw new Error("view --range is only supported with --view coupling");
   }
-  if (isViewCommand(options.command) && options.format !== undefined) {
-    throw new Error(`${options.command} does not support --format`);
+  if (options.command === "view" && options.view !== "coupling" && options.format !== undefined) {
+    throw new Error(`view --view ${options.view} does not support --format`);
   }
-  if ((options.command === "content" || options.command === "identity") && options.pretty) {
-    throw new Error(`${options.command} does not support --pretty`);
+  if (options.command !== "view" && options.view !== "content") {
+    throw new Error(`${options.command} does not support --view`);
   }
-  if (options.command === "digest" && options.range !== undefined && options.pretty) {
-    throw new Error("digest --range does not support --pretty");
+  if (options.fillCache && options.command !== "commits") {
+    throw new Error(`${options.command} does not support --cache`);
   }
-  if (options.command === "digest" && options.format === "jsonl" && options.pretty) {
-    throw new Error("digest --format jsonl does not support --pretty");
+  if (options.command === "digest" && options.format === "jsonl" && options.range === undefined) {
+    throw new Error("digest --format jsonl requires --range");
   }
-  if (options.command === "coupling" && options.range !== undefined && options.pretty) {
-    throw new Error("coupling --range does not support --pretty");
+  if (
+    options.command === "view" &&
+    options.view === "coupling" &&
+    options.format === "jsonl" &&
+    options.range === undefined
+  ) {
+    throw new Error("view --view coupling --format jsonl requires --range");
   }
-  if (options.command === "coupling" && options.format === "jsonl" && options.pretty) {
-    throw new Error("coupling --format jsonl does not support --pretty");
-  }
-  if ((options.command === "commits" || options.command === "cache") && options.format === "jsonl") {
+  if (options.command === "commits" && options.format === "jsonl") {
     throw new Error(`${options.command} does not support --format jsonl`);
-  }
-  if ((options.command === "commits" || options.command === "cache") && options.format !== "json" && options.pretty) {
-    throw new Error(`${options.command} does not support --pretty without --format json`);
   }
   if (!options.cache && !isCacheControlledCommand(options.command)) {
     throw new Error(`${options.command} does not support --no-cache`);
   }
   if (options.command === "verify" && options.format !== undefined && options.format !== "json") {
     throw new Error("verify only supports --format json");
-  }
-  if (options.command === "verify" && options.format !== "json" && options.pretty) {
-    throw new Error("verify does not support --pretty without --format json");
   }
 
   return options;
@@ -362,20 +363,9 @@ function requireValue(args: string[], flag: string): string {
   return value;
 }
 
-function isViewCommand(command: CliOptions["command"]): boolean {
-  return command === "content" ||
-    command === "identity" ||
-    command === "identity-from" ||
-    command === "identity-to";
-}
-
 function isCacheControlledCommand(command: CliOptions["command"]): boolean {
   return command === "digest" ||
-    command === "content" ||
-    command === "identity" ||
-    command === "identity-from" ||
-    command === "identity-to" ||
-    command === "coupling";
+    command === "view";
 }
 
 function parseFormat(value: string): Format {
@@ -385,20 +375,33 @@ function parseFormat(value: string): Format {
   throw new Error(`unknown format: ${value}`);
 }
 
+function parseView(value: string): ViewType {
+  if (
+    value === "content" ||
+    value === "identity" ||
+    value === "identity-from" ||
+    value === "identity-to" ||
+    value === "coupling"
+  ) {
+    return value;
+  }
+  throw new Error(`unknown view: ${value}`);
+}
+
 function printHelp(): void {
   process.stdout.write(`blockcommit
 
 Usage:
-  blockcommit digest [commit] [--pretty] [--no-cache] [--cwd <path>]
-  blockcommit content [commit] [--no-cache] [--cwd <path>]
-  blockcommit identity [commit] [--no-cache] [--cwd <path>]
-  blockcommit identity-from [commit] [--pretty] [--no-cache] [--cwd <path>]
-  blockcommit identity-to [commit] [--pretty] [--no-cache] [--cwd <path>]
-  blockcommit coupling [commit] [--pretty] [--no-cache] [--cwd <path>]
-  blockcommit commits [--range <rev-range>] [--format json] [--cwd <path>]
-  blockcommit cache [--range <rev-range>] [--format json] [--cwd <path>]
-  blockcommit coupling --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
+  blockcommit digest [commit] [--no-cache] [--cwd <path>]
   blockcommit digest --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
+  blockcommit view [commit] [--view content] [--no-cache] [--cwd <path>]
+  blockcommit view [commit] --view identity [--no-cache] [--cwd <path>]
+  blockcommit view [commit] --view identity-from [--no-cache] [--cwd <path>]
+  blockcommit view [commit] --view identity-to [--no-cache] [--cwd <path>]
+  blockcommit view [commit] --view coupling [--no-cache] [--cwd <path>]
+  blockcommit view --view coupling --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
+  blockcommit commits [--range <rev-range>] [--format json] [--cwd <path>]
+  blockcommit commits --cache [--range <rev-range>] [--format json] [--cwd <path>]
   blockcommit verify [commit] [--cwd <path>]
   blockcommit verify digest.json --cwd <path>
   blockcommit verify [commit|digest.json] --format json [--cwd <path>]
@@ -406,16 +409,10 @@ Usage:
 
 Commands:
   digest    emit the canonical JSON line-move digest for a commit
-  content   emit compact content operations: moved, inserted, and deleted blocks
-  identity  emit pairwise file-identity flow between paths
-  identity-from
-            emit where old file content moved
-  identity-to
-            emit where new file content came from
-  coupling  emit ordered symbols/ops JSON for VPEL relation mapping
+  view      emit readable content/identity views or coupling JSON
   commits   persist and print the commit graph view: digested,
-            undigested, and skipped commits
-  cache     digest undigested non-merge commits into the persistent store
+            undigested, and skipped commits. Add --cache to digest
+            undigested non-merge commits into the persistent store.
   verify    rebuild each changed file from parent + digest blocks and
             byte-compare against the commit; --range walks a rev-list
             (merges skipped) and verifies every commit in it. Passing
@@ -428,13 +425,19 @@ Options:
             or its .git directory; blockcommit normalizes it through an
             internal .git/.bgit_cache pointer.
   --no-cache
-            bypass the persistent store for digest/content/identity/coupling
-            commands. By default, computed commits are read from or written
-            to .git/.bgit_cache/blockcommit.
+            bypass the persistent store for digest/view commands. By
+            default, computed commits are read from or written to
+            .git/.bgit_cache/blockcommit.
+  --view <type>
+            choose a view: content, identity, identity-from, identity-to,
+            or coupling. Defaults to content.
+  --cache
+            with commits, digest undigested non-merge commits in the
+            selected range into the persistent store.
 
 Formats:
-  json        full line-move digest (canonical)
-  jsonl       one canonical digest JSON record per line, for digest ranges
+  json        structured JSON output where supported
+  jsonl       one JSON record per line for digest and coupling ranges
 `);
 }
 

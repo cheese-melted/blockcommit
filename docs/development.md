@@ -17,7 +17,7 @@ For broader reconstruction coverage, run:
 ```sh
 blockcommit verify --range <rev-range> --cwd <repo>
 blockcommit commits --range <rev-range> --cwd <repo>
-blockcommit cache --range <rev-range> --cwd <repo>
+blockcommit commits --cache --range <rev-range> --cwd <repo>
 blockcommit digest --range <rev-range> --cwd <repo> --format jsonl --no-cache
 ```
 

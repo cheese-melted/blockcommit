@@ -4,10 +4,10 @@ The readable views are derived from the canonical digest. They do not replace th
 
 ## Content
 
-`content` renders the content layer as compact movement tuples:
+`view --view content` renders the content layer as compact movement tuples. `content` is the default view:
 
 ```sh
-blockcommit content HEAD
+blockcommit view HEAD
 ```
 
 ```text
@@ -20,10 +20,10 @@ M a.ts:1+6 -> b.ts:1+6
 
 ## Identity
 
-`identity` renders pairwise file-continuity flow between paths:
+`view --view identity` renders pairwise file-continuity flow between paths:
 
 ```sh
-blockcommit identity HEAD
+blockcommit view HEAD --view identity
 ```
 
 ```text
@@ -36,14 +36,22 @@ The text view is derived from cross-path move blocks. It does not label events a
 
 ## Identity From/To
 
-`identity-from` answers where each old file's moved lines ended up:
+`view --view identity-from` answers where each old file's moved lines ended up:
+
+```sh
+blockcommit view HEAD --view identity-from
+```
 
 ```text
 from old.ts:10 => new.ts (10/10, 100%)
 from a.ts:10 => b.ts (6/10, 60%), unmoved (4/10, 40%)
 ```
 
-`identity-to` answers where each new file's moved lines came from:
+`view --view identity-to` answers where each new file's moved lines came from:
+
+```sh
+blockcommit view HEAD --view identity-to
+```
 
 ```text
 to new.ts:10 <= old.ts (10/10, 100%)
@@ -51,34 +59,16 @@ to b.ts:20 <= a.ts (6/20, 30%), new (14/20, 70%)
 to app.ts:20 <= model.ts (5/20, 25%), view.ts (3/20, 15%), new (12/20, 60%)
 ```
 
-Add `--pretty` for aligned rows:
-
-```sh
-blockcommit identity-from HEAD --pretty
-blockcommit identity-to HEAD --pretty
-```
-
-```text
-a.ts:10  =>  b.ts     (6/10, 60%)
-            unmoved  (4/10, 40%)
-```
-
-```text
-app.ts:20  <=  model.ts  (5/20, 25%)
-             view.ts   (3/20, 15%)
-             new       (12/20, 60%)
-```
-
 The canonical JSON still includes derived identity events for exact or majority path continuity, such as whole-file rename or path reuse. The text views intentionally emphasize counts because they are usually the more useful reading surface.
 
 ## Coupling
 
-`coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system. It is a projection of the digest's canonical `symbols` and block endpoint totals.
+`view --view coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system. It is a projection of the digest's canonical `symbols` and block endpoint totals.
 
 ```sh
-blockcommit coupling HEAD --pretty
-blockcommit coupling --range v1.0..main --format jsonl
-blockcommit coupling HEAD --no-cache
+blockcommit view HEAD --view coupling
+blockcommit view --view coupling --range v1.0..main --format jsonl
+blockcommit view HEAD --view coupling --no-cache
 ```
 
 ```json
@@ -103,11 +93,11 @@ Each op is:
 
 ## Commit Store
 
-`commits` and `cache` are the persistent view over Git history:
+`commits` is the persistent view over Git history:
 
 ```sh
 blockcommit commits --range v1.0..HEAD
-blockcommit cache --range v1.0..HEAD
+blockcommit commits --cache --range v1.0..HEAD
 ```
 
-Digest-producing commands fill the store by default. `commits` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. `cache` explicitly backfills the undigested non-merge commits and writes both canonical digest records and coupling records under `.git/.bgit_cache/blockcommit`. Add `--no-cache` to digest/content/identity/coupling commands to bypass store reads and writes for that run.
+Digest-producing commands fill the store by default. `commits` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. `commits --cache` explicitly backfills the undigested non-merge commits and writes both canonical digest records and coupling records under `.git/.bgit_cache/blockcommit`. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.
