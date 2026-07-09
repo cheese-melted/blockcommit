@@ -70,3 +70,35 @@ app.ts:20  <=  model.ts  (5/20, 25%)
 ```
 
 The canonical JSON still includes derived identity events for exact or majority path continuity, such as whole-file rename or path reuse. The text views intentionally emphasize counts because they are usually the more useful reading surface.
+
+## Coupling
+
+`coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system.
+
+```sh
+blockcommit coupling HEAD --pretty
+blockcommit coupling --range v1.0..main --format jsonl
+```
+
+```json
+{
+  "schema_version": "blockcommit.coupling.v1",
+  "commit": "abc123",
+  "parent": "def456",
+  "symbols": {
+    "s1": "a.ts",
+    "s2": "b.ts"
+  },
+  "ops": [
+    ["move", "s1", "s2", 6, 6, 8]
+  ]
+}
+```
+
+Each op is:
+
+```text
+[kind, from_symbol, to_symbol, lines, from_total, to_total]
+```
+
+`kind` is `move`, `insert`, or `delete`. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.

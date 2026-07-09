@@ -22,6 +22,7 @@ blockcommit verify --range <rev-range> --cwd <repo>
 
 ```ts
 import {
+  couplingPayload,
   digestCommit,
   identityFlows,
   renderContent,
@@ -39,6 +40,7 @@ console.log(renderIdentity(digest));
 console.log(renderIdentityFrom(digest));
 console.log(renderIdentityTo(digest));
 console.log(identityFlows(digest));
+console.log(couplingPayload(digest));
 
 const result = verifyCommit({ cwd: "/path/to/repo", commit: "HEAD" });
 const saved = verifyDigest({ cwd: "/path/to/repo", digest });
