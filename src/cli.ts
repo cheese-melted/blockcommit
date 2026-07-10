@@ -404,12 +404,11 @@ Commands:
 Options:
   --cwd <path>
             override the current working repo. The path may be a worktree
-            or its .git directory; git-trails normalizes it through an
-            internal .git/.bgit_cache pointer.
+            or its .git directory.
   --no-cache
             bypass the persistent store for digest/view commands. By
             default, computed digests are read from or written to
-            .git/.bgit_cache/git-trails.
+            .git-trails next to the repository's .git entry.
   --view <type>
             choose a view: content, identity, identity-from, or identity-to.
             Defaults to content.

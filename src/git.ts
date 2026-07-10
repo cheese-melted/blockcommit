@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const gitlinkMode = "160000";
 
 export interface CommitInfo {
   repo: string;
+  store: string;
   commit: string;
   parent: string | null;
   diffBase: string;
@@ -14,6 +15,7 @@ export interface CommitInfo {
 
 export interface CommitGraphInfo {
   repo: string;
+  store: string;
   commit: string;
   parents: string[];
 }
@@ -44,7 +46,7 @@ interface RawEntry {
 }
 
 export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
-  const repo = resolveRepoCwd(cwd);
+  const { repo, store } = resolveRepo(cwd);
   assertSha1ObjectFormat(repo);
   const commit = gitText(repo, ["rev-parse", "--verify", `${commitish}^{commit}`]).trim();
   const revLine = gitText(repo, ["rev-list", "--parents", "-n", "1", commit]).trim();
@@ -56,6 +58,7 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
 
   return {
     repo,
+    store,
     commit,
     parent: parents[0] ?? null,
     diffBase: parents[0] ?? emptyTree
@@ -63,7 +66,7 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
 }
 
 export function tryResolveCommit(cwd: string, commitish: string): string | null {
-  const repo = tryResolveRepoCwd(cwd) ?? cwd;
+  const repo = tryResolveRepo(cwd)?.repo ?? cwd;
   const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${commitish}^{commit}`], {
     cwd: repo,
     encoding: "utf8"
@@ -74,7 +77,7 @@ export function tryResolveCommit(cwd: string, commitish: string): string | null 
 // Resolves the repo and every commit's parent in two git calls total, so
 // range walks don't pay per-commit rev-parse/rev-list spawns.
 export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
-  const repo = resolveRepoCwd(cwd);
+  const { repo, store } = resolveRepo(cwd);
   assertSha1ObjectFormat(repo);
   return gitText(repo, ["rev-list", "--no-merges", "--reverse", "--parents", range])
     .split("\n")
@@ -82,12 +85,12 @@ export function listCommitInfos(cwd: string, range: string): CommitInfo[] {
     .filter((line) => line.length > 0)
     .map((line) => {
       const [commit, ...parents] = line.split(/\s+/);
-      return { repo, commit, parent: parents[0] ?? null, diffBase: parents[0] ?? emptyTree };
+      return { repo, store, commit, parent: parents[0] ?? null, diffBase: parents[0] ?? emptyTree };
     });
 }
 
 export function listCommitGraphInfos(cwd: string, range: string): CommitGraphInfo[] {
-  const repo = resolveRepoCwd(cwd);
+  const { repo, store } = resolveRepo(cwd);
   assertSha1ObjectFormat(repo);
   return gitText(repo, ["rev-list", "--reverse", "--parents", range])
     .split("\n")
@@ -95,38 +98,44 @@ export function listCommitGraphInfos(cwd: string, range: string): CommitGraphInf
     .filter((line) => line.length > 0)
     .map((line) => {
       const [commit, ...parents] = line.split(/\s+/);
-      return { repo, commit, parents };
+      return { repo, store, commit, parents };
     });
 }
 
-export function resolveRepoCacheCwd(cwd: string): string {
-  const repo = resolveRepoCwd(cwd);
+export function resolveRepoStorePath(cwd: string): string {
+  const { repo, store } = resolveRepo(cwd);
   assertSha1ObjectFormat(repo);
-  return repo;
+  return store;
 }
 
-function resolveRepoCwd(cwd: string): string {
-  const repo = tryResolveRepoCwd(cwd);
+interface ResolvedRepo {
+  repo: string;
+  store: string;
+}
+
+function resolveRepo(cwd: string): ResolvedRepo {
+  const repo = tryResolveRepo(cwd);
   if (repo !== null) {
     return repo;
   }
-  return ensureBgitCache(resolve(gitText(cwd, ["rev-parse", "--absolute-git-dir"]).trim()));
+  throw new Error(`not a Git worktree: ${cwd}`);
 }
 
-function tryResolveRepoCwd(cwd: string): string | null {
+function tryResolveRepo(cwd: string): ResolvedRepo | null {
   const direct = spawnSync("git", ["rev-parse", "--absolute-git-dir"], {
     cwd,
     encoding: "utf8"
   });
   if (direct.status === 0) {
-    return ensureBgitCache(resolve(direct.stdout.trim()));
+    const gitDir = resolve(direct.stdout.trim());
+    return { repo: gitDir, store: resolveStorePath(cwd, gitDir) };
   }
 
   const gitDir = resolve(cwd);
   if (!isPointedGitDir(gitDir)) {
     return null;
   }
-  return ensureBgitCache(gitDir);
+  return { repo: gitDir, store: resolveStorePath(cwd, gitDir) };
 }
 
 function isPointedGitDir(path: string): boolean {
@@ -147,17 +156,25 @@ function isPointedGitDir(path: string): boolean {
   return bare.status === 0 && bare.stdout.trim() === "false";
 }
 
-function ensureBgitCache(gitDir: string): string {
-  const cache = resolve(gitDir, ".bgit_cache");
-  mkdirSync(cache, { recursive: true });
-  const pointer = resolve(cache, ".git");
-  const contents = `gitdir: ${gitDir}\n`;
-  if (!existsSync(pointer) || readFileSync(pointer, "utf8") !== contents) {
-    const temporary = `${pointer}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-    writeFileSync(temporary, contents);
-    renameSync(temporary, pointer);
+function resolveStorePath(cwd: string, gitDir: string): string {
+  const topLevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8"
+  });
+  if (topLevel.status === 0) {
+    return resolve(topLevel.stdout.trim(), ".git-trails");
   }
-  return cache;
+
+  const worktreePointer = resolve(gitDir, "gitdir");
+  if (existsSync(worktreePointer)) {
+    return resolve(dirname(readFileSync(worktreePointer, "utf8").trim()), ".git-trails");
+  }
+
+  if (basename(gitDir) === ".git") {
+    return resolve(gitDir, "..", ".git-trails");
+  }
+
+  throw new Error(`cannot locate the worktree for Git directory: ${gitDir}`);
 }
 
 function assertSha1ObjectFormat(repo: string): void {

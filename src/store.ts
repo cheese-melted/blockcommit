@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { computeDigestFor } from "./digest";
-import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
+import { listCommitGraphInfos, resolveRepoStorePath, type CommitGraphInfo, type CommitInfo } from "./git";
 import { digestAlgorithm, schemaVersion, type GitTrailsDigest } from "./types";
 
 export const commitStoreSchemaVersion = "git-trails.commit-store.v2";
@@ -66,7 +66,7 @@ const defaultRange = "HEAD";
 
 export function commitStoreView(cwd: string, range = defaultRange): CommitStoreView {
   const graph = listCommitGraphInfos(cwd, range);
-  const paths = storePaths(graph[0]?.repo ?? resolveRepoCacheCwd(cwd));
+  const paths = storePaths(graph[0]?.store ?? resolveRepoStorePath(cwd));
   withIndexLock(paths, () => {
     const index = loadIndex(paths);
     let changed = false;
@@ -88,7 +88,7 @@ export function commitStoreView(cwd: string, range = defaultRange): CommitStoreV
 }
 
 export function cachedDigestForInfo(info: CommitInfo): GitTrailsDigest {
-  const paths = storePaths(info.repo);
+  const paths = storePaths(info.store);
   withIndexLock(paths, () => {
     const index = loadIndex(paths);
     index.commits[info.commit] = {
@@ -109,11 +109,11 @@ export function cachedDigestForInfo(info: CommitInfo): GitTrailsDigest {
 }
 
 export function writeDigestToCache(info: CommitInfo, digest: GitTrailsDigest): void {
-  writeCachedDigest(storePaths(info.repo), info, digest);
+  writeCachedDigest(storePaths(info.store), info, digest);
 }
 
 export function cachedDigestRecordForInfo(info: CommitInfo): CachedDigestRecord | null {
-  const paths = storePaths(info.repo);
+  const paths = storePaths(info.store);
   const digestPath = objectPath(paths.digests, info.commit);
   if (!existsSync(digestPath)) {
     return null;
@@ -186,6 +186,7 @@ function viewFromGraph(paths: StorePaths, range: string, graph: CommitGraphInfo[
 function toCommitInfo(info: CommitGraphInfo): CommitInfo {
   return {
     repo: info.repo,
+    store: info.store,
     commit: info.commit,
     parent: info.parents[0] ?? null,
     diffBase: info.parents[0] ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -236,8 +237,7 @@ function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: GitTrail
   writeJson(objectPath(paths.digests, info.commit), digest);
 }
 
-function storePaths(repoCacheCwd: string): StorePaths {
-  const root = resolve(repoCacheCwd, "git-trails");
+function storePaths(root: string): StorePaths {
   const paths = {
     root,
     index: resolve(root, "index.json"),

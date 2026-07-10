@@ -1037,7 +1037,8 @@ describe("cli", () => {
 
     const worktreeResult = cli(["view", commit, "--cwd", repo]);
     expect(worktreeResult.status).toBe(0);
-    expect(existsSync(join(gitDir, ".bgit_cache", ".git"))).toBe(true);
+    expect(existsSync(join(repo, ".git-trails", "index.json"))).toBe(true);
+    expect(existsSync(join(gitDir, ".bgit_cache"))).toBe(false);
 
     const result = cli(["view", commit, "--cwd", gitDir]);
     expect(result.status).toBe(0);
@@ -1066,7 +1067,7 @@ describe("cli", () => {
     commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const commit = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "git-trails");
+    const root = join(repo, ".git-trails");
 
     const uncached = cli(["view", commit, "--cwd", repo, "--no-cache"]);
     expect(uncached.status).toBe(0);
@@ -1099,7 +1100,7 @@ describe("cli", () => {
       commits: [{ commit: second, status: "undigested" }]
     });
 
-    const root = join(repo, ".git", ".bgit_cache", "git-trails");
+    const root = join(repo, ".git-trails");
     expect(existsSync(join(root, "index.json"))).toBe(true);
 
     const warmed = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
@@ -1126,7 +1127,7 @@ describe("cli", () => {
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "git-trails");
+    const root = join(repo, ".git-trails");
 
     const cached = cli(["digest", second, "--cwd", repo]);
     expect(cached.status).toBe(0);
@@ -1156,7 +1157,7 @@ describe("cli", () => {
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "git-trails");
+    const root = join(repo, ".git-trails");
 
     expect(cli(["digest", second, "--cwd", repo]).status).toBe(0);
     writeFileSync(join(root, "index.json"), JSON.stringify({
@@ -1218,7 +1219,7 @@ describe("cli", () => {
     expect(statuses).toEqual(commits.map(() => 0));
 
     const index = JSON.parse(readFileSync(
-      join(repo, ".git", ".bgit_cache", "git-trails", "index.json"),
+      join(repo, ".git-trails", "index.json"),
       "utf8"
     ));
     expect(index.schema_version).toBe("git-trails.commit-store.v2");
@@ -1322,7 +1323,7 @@ describe("cli", () => {
       results: [{ commit, ok: true }]
     });
 
-    const digestPath = join(repo, ".git", ".bgit_cache", "git-trails", "digests", `${commit}.json`);
+    const digestPath = join(repo, ".git-trails", "digests", `${commit}.json`);
     const tampered = JSON.parse(readFileSync(digestPath, "utf8"));
     tampered.blocks[0].payload_sha256 = "0".repeat(64);
     writeFileSync(digestPath, JSON.stringify(tampered));

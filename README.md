@@ -22,7 +22,7 @@ npx git-trails view
 
 All commands default to the current working repo. Use `--cwd <path>` only when reading another worktree or a `.git` directory directly.
 
-By default, commands that compute commit digests read from and write to `.git/.bgit_cache/git-trails`. Add `--no-cache` to bypass the persistent store for a single run.
+By default, commands that compute commit digests read from and write to `.git-trails`, next to the repository's `.git` entry. Add `--no-cache` to bypass the persistent store for a single run.
 
 ### Digest
 
@@ -95,8 +95,9 @@ b.ts:12  <-  a.ts  (6/12, 50%)
 Digest and view commands use a repository-local store by default:
 
 ```text
-index.json              tracked commit graph
-digests/<commit>.json   canonical digest records
+.git-trails/
+  index.json              tracked commit graph
+  digests/<commit>.json   canonical digest records
 ```
 
 ```sh

@@ -4,7 +4,7 @@
 
 ## Canonicality
 
-The digest excludes local checkout paths and other machine-local facts. Cached digests are stored under the selected repository's `.git/.bgit_cache/git-trails` directory and can be checked against their referenced commits:
+The digest excludes local checkout paths and other machine-local facts. Cached digests are stored in `.git-trails` next to the selected repository's `.git` entry and can be checked against their referenced commits:
 
 ```sh
 git trails cache verify --cwd /path/to/repo
