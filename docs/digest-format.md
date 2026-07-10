@@ -4,10 +4,10 @@
 
 ## Canonicality
 
-The digest excludes local checkout paths and other machine-local facts. Saved digests do not identify a checkout, so verifying a JSON file requires an explicit repository unless you run the command from that repo:
+The digest excludes local checkout paths and other machine-local facts. Cached digests are stored under the selected repository's `.git/.bgit_cache/blockcommit` directory and can be checked against their referenced commits:
 
 ```sh
-blockcommit verify digest.json --cwd /path/to/repo
+blockcommit cache verify --cwd /path/to/repo
 ```
 
 The current schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
@@ -106,7 +106,7 @@ Coordinate semantics:
 }
 ```
 
-For represented files, every changed line appears in exactly one block. Verification applies all source removals to the parent content, places payloads at destination spans, and byte-compares against the committed file. Coupling uses the same `symbols` and span `total_lines` fields to compute relation denominators.
+For represented files, every changed line appears in exactly one block. Verification applies all source removals to the parent content, places payloads at destination spans, and byte-compares against the committed file.
 
 ## Pairing Algorithm
 
@@ -141,7 +141,7 @@ Git diff input is pinned with `--no-renames`, `--diff-algorithm=myers`, `--no-in
 When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`.
 
 - Binary files are not represented as line blocks. They report `old_lines: 0`, `new_lines: 0`, and `unsupported_reason: "binary"`.
-- Merge commits are rejected. `verify --range` skips them.
+- Merge commits are rejected. `cache verify --range` skips them.
 - Root commits diff against the empty tree.
 - Submodule pointer changes, mode-only changes, and file-type changes are represented at file level with unsupported metadata.
 - Mode-plus-content changes keep `line_digest_status: "represented"` when content bytes are fully modeled.

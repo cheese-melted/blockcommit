@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { couplingPayload } from "./coupling";
 import { computeDigestFor } from "./digest";
 import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
 import { digestAlgorithm, schemaVersion, type BlockCommitDigest } from "./types";
@@ -30,6 +29,10 @@ export interface CommitStoreView {
   commits: CommitStoreCommit[];
 }
 
+export interface CachedDigestRecord {
+  digest: unknown;
+}
+
 interface StoredCommit {
   commit: string;
   parents: string[];
@@ -44,7 +47,6 @@ interface StorePaths {
   root: string;
   index: string;
   digests: string;
-  coupling: string;
 }
 
 const defaultRange = "HEAD";
@@ -91,6 +93,17 @@ export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
 
 export function writeDigestToCache(info: CommitInfo, digest: BlockCommitDigest): void {
   writeCachedDigest(storePaths(info.repo), info, digest);
+}
+
+export function cachedDigestRecordForInfo(info: CommitInfo): CachedDigestRecord | null {
+  const paths = storePaths(info.repo);
+  const digestPath = objectPath(paths.digests, info.commit);
+  if (!existsSync(digestPath)) {
+    return null;
+  }
+  return {
+    digest: JSON.parse(readFileSync(digestPath, "utf8"))
+  };
 }
 
 export function renderCommitStoreView(view: CommitStoreView): string {
@@ -160,7 +173,7 @@ function hasCachedCommit(paths: StorePaths, info: CommitInfo): boolean {
 function readCachedDigest(paths: StorePaths, info: CommitInfo): BlockCommitDigest | null {
   const commit = info.commit;
   const path = objectPath(paths.digests, commit);
-  if (!existsSync(path) || !existsSync(objectPath(paths.coupling, commit))) {
+  if (!existsSync(path)) {
     return null;
   }
   const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
@@ -176,7 +189,6 @@ function cachedDigestMatches(info: CommitInfo, digest: BlockCommitDigest): boole
 
 function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: BlockCommitDigest): void {
   writeJson(objectPath(paths.digests, info.commit), digest);
-  writeJson(objectPath(paths.coupling, info.commit), couplingPayload(digest));
 }
 
 function storePaths(repoCacheCwd: string): StorePaths {
@@ -184,11 +196,9 @@ function storePaths(repoCacheCwd: string): StorePaths {
   const paths = {
     root,
     index: resolve(root, "index.json"),
-    digests: resolve(root, "digests"),
-    coupling: resolve(root, "coupling")
+    digests: resolve(root, "digests")
   };
   mkdirSync(paths.digests, { recursive: true });
-  mkdirSync(paths.coupling, { recursive: true });
   return paths;
 }
 

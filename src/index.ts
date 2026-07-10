@@ -1,12 +1,6 @@
 export { digestCommit, type DigestOptions } from "./digest";
 export { renderContent } from "./content";
 export {
-  couplingPayload,
-  couplingSchemaVersion,
-  type CouplingOp,
-  type CouplingPayload
-} from "./coupling";
-export {
   cachedDigestForInfo,
   commitStoreSchemaVersion,
   commitStoreView,

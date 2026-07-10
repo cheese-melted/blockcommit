@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import Ajv from "ajv/dist/2020";
 import { renderContent } from "../src/content";
-import { couplingPayload } from "../src/coupling";
 import { digestCommit } from "../src/digest";
 import { listCommits } from "../src/git";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "../src/identity-view";
@@ -708,15 +707,6 @@ describe("identity", () => {
     const newB = digest.files.find((file) => file.path === "b.ts");
     expect(oldA?.old_sha256).toBe(newB?.new_sha256 ?? "");
     expect(digest.identity[0].old_identity.sha256).toBe(oldA?.old_sha256 ?? "");
-    expect(couplingPayload(digest)).toMatchObject({
-      commit,
-      parent: expect.any(String),
-      symbols: ["a.ts", "b.ts", "a.ts"],
-      ops: [
-        ["move", 0, 1, 3, 3, 3],
-        ["insert", null, 2, 2, 0, 2]
-      ]
-    });
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -789,13 +779,13 @@ describe("identity", () => {
     expect(renderIdentity(digest)).toBe("a.ts:3 -> b.ts:2 (1)\n");
     expect(renderIdentityFrom(digest)).toBe("from a.ts:3 => b.ts (1/3, 33.3%), unmoved (2/3, 66.7%)\n");
     expect(renderIdentityFrom(digest, { pretty: true })).toBe(
-      "  a.ts:3  =>  b.ts     (1/3, 33.3%)\n" +
-      "              unmoved  (2/3, 66.7%)\n"
+      "a.ts:3  ->  b.ts     (1/3, 33.3%)\n" +
+      "            unmoved  (2/3, 66.7%)\n"
     );
     expect(renderIdentityTo(digest)).toBe("to b.ts:2 <= a.ts (1/2, 50%), new (1/2, 50%)\n");
     expect(renderIdentityTo(digest, { pretty: true })).toBe(
-      "  b.ts:2  <=  a.ts  (1/2, 50%)\n" +
-      "              new   (1/2, 50%)\n"
+      "b.ts:2  <-  a.ts  (1/2, 50%)\n" +
+      "            new   (1/2, 50%)\n"
     );
   });
 
@@ -993,55 +983,48 @@ describe("cli", () => {
     commitAll(repo, "base");
 
     git(repo, ["rm", "old.txt"]);
-    writeFileSync(join(repo, "new.txt"), "alpha\nbeta\n");
+    writeFileSync(join(repo, "new.txt"), "alpha\nbeta\ngamma\n");
     const commit = commitAll(repo, "rename without git mv");
 
     const result = cli(["view", commit, "--cwd", repo, "--view", "identity"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("old.txt:2 -> new.txt:2 (2)\n");
+    expect(result.stdout).toBe("old.txt:2 -> new.txt:3 (2)\n");
+
+    const alias = cli(["view", commit, "--cwd", repo, "--identity"]);
+    expect(alias.status).toBe(0);
+    expect(alias.stdout).toBe(result.stdout);
 
     const from = cli(["view", commit, "--cwd", repo, "--view", "identity-from"]);
     expect(from.status).toBe(0);
-    expect(from.stdout).toBe("from old.txt:2 => new.txt (2/2, 100%)\n");
+    expect(from.stdout).toBe("old.txt:2  ->  new.txt  (2/2, 100%)\n");
 
     const to = cli(["view", commit, "--cwd", repo, "--view", "identity-to"]);
     expect(to.status).toBe(0);
-    expect(to.stdout).toBe("to new.txt:2 <= old.txt (2/2, 100%)\n");
+    expect(to.stdout).toBe("new.txt:3  <-  old.txt  (2/3, 66.7%)\n");
+
+    const toAlias = cli(["view", commit, "--cwd", repo, "--identity-to"]);
+    expect(toAlias.status).toBe(0);
+    expect(toAlias.stdout).toBe(to.stdout);
   });
 
-  test("prints ordered coupling payloads", () => {
-    const repo = makeRepo();
-    writeFileSync(join(repo, "a.ts"), "one()\ntwo()\n");
-    commitAll(repo, "base");
-
-    git(repo, ["rm", "a.ts"]);
-    writeFileSync(join(repo, "b.ts"), "one()\ntwo()\n");
-    const commit = commitAll(repo, "move a to b");
-
-    const result = cli(["view", commit, "--cwd", repo, "--view", "coupling"]);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      commit,
-      symbols: ["a.ts", "b.ts"],
-      ops: [["move", 0, 1, 2, 2, 2]]
-    });
-  });
-
-  test("prints coupling ranges as JSONL", () => {
+  test("prints empty identity view messages", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "one\n");
-    const first = commitAll(repo, "one");
+    commitAll(repo, "base");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
-    const second = commitAll(repo, "two");
+    const commit = commitAll(repo, "add line");
 
-    const result = cli(["view", "--view", "coupling", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
-    expect(result.status).toBe(0);
-    const lines = result.stdout.trimEnd().split("\n");
-    expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0])).toMatchObject({
-      commit: second,
-      ops: [["insert", null, 0, 1, 0, 2]]
-    });
+    const identity = cli(["view", commit, "--cwd", repo, "--identity"]);
+    expect(identity.status).toBe(0);
+    expect(identity.stdout).toBe("no cross-path identity flows\n");
+
+    const from = cli(["view", commit, "--cwd", repo, "--identity-from"]);
+    expect(from.status).toBe(0);
+    expect(from.stdout).toBe("no cross-path identity sources\n");
+
+    const to = cli(["view", commit, "--cwd", repo, "--identity-to"]);
+    expect(to.status).toBe(0);
+    expect(to.stdout).toBe("no cross-path identity destinations\n");
   });
 
   test("supports pointing --cwd at a .git directory", () => {
@@ -1052,17 +1035,13 @@ describe("cli", () => {
     const commit = commitAll(repo, "two");
     const gitDir = join(repo, ".git");
 
-    const worktreeResult = cli(["view", commit, "--cwd", repo, "--view", "coupling"]);
+    const worktreeResult = cli(["view", commit, "--cwd", repo]);
     expect(worktreeResult.status).toBe(0);
     expect(existsSync(join(gitDir, ".bgit_cache", ".git"))).toBe(true);
 
-    const result = cli(["view", commit, "--cwd", gitDir, "--view", "coupling"]);
+    const result = cli(["view", commit, "--cwd", gitDir]);
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      commit,
-      symbols: ["file.txt"],
-      ops: [["insert", null, 0, 1, 0, 2]]
-    });
+    expect(result.stdout).toBe("+ file.txt:2+1\n");
   });
 
   test("prints canonical digest ranges as JSONL", () => {
@@ -1097,7 +1076,6 @@ describe("cli", () => {
     expect(cached.status).toBe(0);
     expect(existsSync(join(root, "index.json"))).toBe(true);
     expect(existsSync(join(root, "digests", `${commit}.json`))).toBe(true);
-    expect(existsSync(join(root, "coupling", `${commit}.json`))).toBe(true);
 
     const view = cli(["cache", "--range", `${commit}^..${commit}`, "--cwd", repo, "--format", "json"]);
     expect(view.status).toBe(0);
@@ -1128,7 +1106,6 @@ describe("cli", () => {
     expect(warmed.status).toBe(0);
     expect(warmed.stdout.trim().split("\n")).toHaveLength(1);
     expect(existsSync(join(root, "digests", `${second}.json`))).toBe(true);
-    expect(existsSync(join(root, "coupling", `${second}.json`))).toBe(true);
 
     const cached = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(cached.status).toBe(0);
@@ -1209,6 +1186,10 @@ describe("cli", () => {
     expect(commits.status).toBe(1);
     expect(commits.stderr).toContain("unknown command: commits");
 
+    const verify = cli(["verify", second, "--cwd", repo]);
+    expect(verify.status).toBe(1);
+    expect(verify.stderr).toContain("unknown command: verify");
+
     const digestRange = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl", "--pretty"]);
     expect(digestRange.status).toBe(1);
     expect(digestRange.stderr).toContain("unknown option: --pretty");
@@ -1217,78 +1198,62 @@ describe("cli", () => {
     expect(digestJsonl.status).toBe(1);
     expect(digestJsonl.stderr).toContain("unknown option: --pretty");
 
-    const couplingRange = cli(["view", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
-    expect(couplingRange.status).toBe(1);
-    expect(couplingRange.stderr).toContain("view --range is only supported with --view coupling");
+    const viewRange = cli(["view", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
+    expect(viewRange.status).toBe(1);
+    expect(viewRange.stderr).toContain("view does not support --range");
 
-    const couplingJsonl = cli(["view", second, "--cwd", repo, "--view", "coupling", "--format", "jsonl"]);
-    expect(couplingJsonl.status).toBe(1);
-    expect(couplingJsonl.stderr).toContain("view --view coupling --format jsonl requires --range");
+    const removedView = cli(["view", second, "--cwd", repo, "--view", "coupling", "--format", "jsonl"]);
+    expect(removedView.status).toBe(1);
+    expect(removedView.stderr).toContain("unknown view: coupling");
 
-    const verify = cli(["verify", second, "--cwd", repo, "--pretty"]);
-    expect(verify.status).toBe(1);
-    expect(verify.stderr).toContain("unknown option: --pretty");
+    const removedFlag = cli(["view", second, "--cwd", repo, "--coupling"]);
+    expect(removedFlag.status).toBe(1);
+    expect(removedFlag.stderr).toContain("unknown option: --coupling");
+
+    const cacheVerify = cli(["cache", "verify", "--cwd", repo, "--pretty"]);
+    expect(cacheVerify.status).toBe(1);
+    expect(cacheVerify.stderr).toContain("unknown option: --pretty");
   });
 
-  test("verifies digest JSON files against their referenced commit", () => {
+  test("verifies cached digests against their referenced commits", () => {
     const repo = makeRepo();
     writeFileSync(join(repo, "file.txt"), "base\n");
-    commitAll(repo, "base");
+    const first = commitAll(repo, "base");
     writeFileSync(join(repo, "file.txt"), "base\nnext\n");
     const commit = commitAll(repo, "add line");
-    const digest = digestCommit({ cwd: repo, commit });
-    const digestPath = join(repo, "digest.json");
-    writeFileSync(digestPath, JSON.stringify(digest, null, 2));
 
-    const missingCwd = cli(["verify", digestPath]);
-    expect(missingCwd.status).toBe(1);
-    expect(missingCwd.stdout).toContain("cwd is required to verify a saved digest");
+    const missing = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo, "--format", "json"]);
+    expect(missing.status).toBe(0);
+    expect(JSON.parse(missing.stdout)).toMatchObject({
+      schema_version: "blockcommit.cache-verify.v1",
+      summary: { checked: 0, ok: 0, failed: 0, missing: 1, skipped: 0 },
+      results: []
+    });
 
-    const ok = cli(["verify", digestPath, "--cwd", repo]);
+    const warmed = cli(["digest", commit, "--cwd", repo]);
+    expect(warmed.status).toBe(0);
+
+    const ok = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo]);
     expect(ok.status).toBe(0);
-    expect(ok.stdout).toContain(`ok ${commit.slice(0, 12)} digest`);
+    expect(ok.stdout).toContain(`ok ${commit.slice(0, 12)}`);
+    expect(ok.stdout).toContain("verified 1/1 cached commits");
 
-    const okJson = cli(["verify", digestPath, "--cwd", repo, "--format", "json"]);
+    const okJson = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo, "--format", "json"]);
     expect(okJson.status).toBe(0);
     expect(JSON.parse(okJson.stdout)).toMatchObject({
-      commit,
-      ok: true
+      schema_version: "blockcommit.cache-verify.v1",
+      summary: { checked: 1, ok: 1, failed: 0, missing: 0, skipped: 0 },
+      results: [{ commit, ok: true }]
     });
 
-    const tampered = JSON.parse(JSON.stringify(digest)) as typeof digest;
+    const digestPath = join(repo, ".git", ".bgit_cache", "blockcommit", "digests", `${commit}.json`);
+    const tampered = JSON.parse(readFileSync(digestPath, "utf8"));
     tampered.blocks[0].payload_sha256 = "0".repeat(64);
-    const tamperedPath = join(repo, "tampered.json");
-    writeFileSync(tamperedPath, JSON.stringify(tampered));
+    writeFileSync(digestPath, JSON.stringify(tampered));
 
-    const fail = cli(["verify", tamperedPath, "--cwd", repo]);
+    const fail = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo]);
     expect(fail.status).toBe(1);
     expect(fail.stdout).toContain("payload_sha256");
-  });
-
-  test("prefers a commit over a same-named file when verifying", () => {
-    const repo = makeRepo();
-    writeFileSync(join(repo, "file.txt"), "base\n");
-    const commit = commitAll(repo, "base");
-    git(repo, ["branch", "dev"]);
-    writeFileSync(join(repo, "dev"), "not json\n");
-
-    const result = cli(["verify", "dev", "--cwd", repo], repo);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`ok ${commit.slice(0, 12)}`);
-  });
-
-  test("prints structured verify output for commits", () => {
-    const repo = makeRepo();
-    writeFileSync(join(repo, "file.txt"), "base\n");
-    const commit = commitAll(repo, "base");
-
-    const result = cli(["verify", commit, "--cwd", repo, "--format", "json"]);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      commit,
-      ok: true,
-      files: [{ path: "file.txt", ok: true }]
-    });
   });
 
   test("ships a JSON schema for the canonical digest", () => {

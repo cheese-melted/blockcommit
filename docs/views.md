@@ -20,10 +20,10 @@ M a.ts:1+6 -> b.ts:1+6
 
 ## Identity
 
-`view --view identity` renders pairwise file-continuity flow between paths:
+`view --identity` renders pairwise file-continuity flow between paths. Same-file moves stay in the content view:
 
 ```sh
-blockcommit view --view identity
+blockcommit view --identity
 ```
 
 ```text
@@ -36,60 +36,31 @@ The text view is derived from cross-path move blocks. It does not label events a
 
 ## Identity From/To
 
-`view --view identity-from` answers where each old file's moved lines ended up:
+`view --identity-from` answers where each old file's moved lines ended up:
 
 ```sh
-blockcommit view --view identity-from
+blockcommit view --identity-from
 ```
 
 ```text
-from old.ts:10 => new.ts (10/10, 100%)
-from a.ts:10 => b.ts (6/10, 60%), unmoved (4/10, 40%)
+old.ts:10  ->  new.ts  (10/10, 100%)
+a.ts:10    ->  b.ts    (6/10, 60%)
 ```
 
-`view --view identity-to` answers where each new file's moved lines came from:
+`view --identity-to` answers where each new file's moved lines came from:
 
 ```sh
-blockcommit view --view identity-to
+blockcommit view --identity-to
 ```
 
 ```text
-to new.ts:10 <= old.ts (10/10, 100%)
-to b.ts:20 <= a.ts (6/20, 30%), new (14/20, 70%)
-to app.ts:20 <= model.ts (5/20, 25%), view.ts (3/20, 15%), new (12/20, 60%)
+new.ts:10  <-  old.ts    (10/10, 100%)
+b.ts:20    <-  a.ts      (6/20, 30%)
+app.ts:20  <-  model.ts  (5/20, 25%)
+                view.ts   (3/20, 15%)
 ```
 
 The canonical JSON still includes derived identity events for exact or majority path continuity, such as whole-file rename or path reuse. The text views intentionally emphasize counts because they are usually the more useful reading surface.
-
-## Coupling
-
-`view --view coupling` renders the third layer: a lean ordered payload for VPEL or another downstream relation system. It is a projection of the digest's canonical `symbols` and block endpoint totals.
-
-```sh
-blockcommit view --view coupling
-blockcommit view --view coupling --range <base>..<tip> --format jsonl
-blockcommit view --view coupling --no-cache
-```
-
-```json
-{
-  "schema_version": "blockcommit.coupling.v1",
-  "commit": "abc123",
-  "parent": "def456",
-  "symbols": ["a.ts", "b.ts"],
-  "ops": [
-    ["move", 0, 1, 6, 6, 8]
-  ]
-}
-```
-
-Each op is:
-
-```text
-[kind, from_symbol_index, to_symbol_index, lines, from_total, to_total]
-```
-
-`kind` is `move`, `insert`, or `delete`. Symbol indexes point into the `symbols` array; duplicate path strings are allowed when one pathname has different old/new identity in the same commit. The line totals come from digest block endpoint `total_lines`. Blockcommit stops at deterministic symbols and ordered ops; VPEL owns relation mapping and score reduction.
 
 ## Cache
 
@@ -97,7 +68,8 @@ Each op is:
 
 ```sh
 blockcommit cache --range <base>..<tip>
+blockcommit cache verify --range <base>..<tip>
 blockcommit cache --format json
 ```
 
-Digest-producing commands fill the store by default. `cache` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. Run `digest --range <base>..<tip> --format jsonl` to compute and stream digests for a range. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.
+Digest-producing commands fill the store by default. `cache` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. `cache verify` checks existing cached digest records against their referenced commits. Run `digest --range <base>..<tip> --format jsonl` to compute and stream digests for a range. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.

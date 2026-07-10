@@ -15,8 +15,8 @@ npm pack --dry-run
 For broader reconstruction coverage, run:
 
 ```sh
-blockcommit verify --range <rev-range> --cwd <repo>
 blockcommit cache --range <rev-range> --cwd <repo>
+blockcommit cache verify --range <rev-range> --cwd <repo>
 blockcommit digest --range <rev-range> --cwd <repo> --format jsonl --no-cache
 ```
 
@@ -26,7 +26,6 @@ When run inside the repo, `--cwd` is optional.
 
 ```ts
 import {
-  couplingPayload,
   digestCommit,
   identityFlows,
   renderContent,
@@ -46,7 +45,6 @@ console.log(renderIdentity(digest));
 console.log(renderIdentityFrom(digest));
 console.log(renderIdentityTo(digest));
 console.log(identityFlows(digest));
-console.log(couplingPayload(digest));
 console.log(commitStoreView("/path/to/repo", "HEAD"));
 console.log(validateDigest(digest));
 

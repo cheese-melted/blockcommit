@@ -81,4 +81,6 @@ jobs:
           git -C "$repo" add . && git -C "$repo" commit -qm move
           node dist/cli.js view HEAD --cwd "$repo" | grep -q '^M a.txt'
           node dist/cli.js digest HEAD --cwd "$repo" > /dev/null
-          node dist/cli.js verify --range "$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD" --cwd "$repo"
+          range="$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD"
+          node dist/cli.js digest --range "$range" --format jsonl --cwd "$repo" > /dev/null
+          node dist/cli.js cache verify --range "$range" --cwd "$repo"

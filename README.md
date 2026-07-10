@@ -43,46 +43,24 @@ blockcommit digest --range <base>..<tip> --format jsonl
 ```sh
 blockcommit cache
 blockcommit cache --range <base>..<tip>
+blockcommit cache verify
+blockcommit cache verify --range <base>..<tip>
 blockcommit cache --format json
 ```
 
-`cache [--range <rev-range>]` refreshes and prints cache state: which commits are digested, undigested, or skipped. Run `digest --range <rev-range> --format jsonl` to compute and cache missing digest records.
-
-### Verify
-
-```sh
-blockcommit verify
-blockcommit verify --format json
-blockcommit verify digest.json --cwd .
-blockcommit verify --range <base>..<tip>
-```
-
-`verify [commit]` rebuilds represented files from the parent tree plus digest blocks and byte-compares against the commit. `verify digest.json --cwd <path>` verifies a saved digest against its referenced commit.
+`cache [--range <rev-range>]` refreshes and prints cache state: which commits are digested, undigested, or skipped. `cache verify [--range <rev-range>]` verifies cached digest records against their referenced commits. Run `digest --range <rev-range> --format jsonl` to compute and cache missing digest records.
 
 ## Views
-
-```sh
-blockcommit view
-
-blockcommit view --view identity
-blockcommit view --view identity-from
-blockcommit view --view identity-to
-
-blockcommit view --view coupling
-blockcommit view --view coupling --range <base>..<tip> --format jsonl
-```
-
-`view [commit] [--view content] [--no-cache]` prints ordered content operations over moved, inserted, and deleted blocks. `content` is the default view.
-
-`view [commit] --view identity [--no-cache]`, `view [commit] --view identity-from [--no-cache]`, and `view [commit] --view identity-to [--no-cache]` print file-continuity views over cross-path moves.
-
-`view [commit] --view coupling [--no-cache]` and `view --view coupling --range <rev-range> --format jsonl [--no-cache]` print a lean projection of the digest's symbols and ordered block list for VPEL. It leaves relation mapping and score reduction to VPEL.
 
 The views are intentionally separated so each one has a narrow job.
 
 ### Content
 
-Content is the byte-correct operation layer:
+`view [commit] [--no-cache]` prints ordered content operations over moved, inserted, and deleted blocks. `content` is the default view.
+
+```sh
+blockcommit view
+```
 
 ```text
 M a.ts:1+6 -> b.ts:1+6
@@ -94,40 +72,21 @@ This is the closest readable view of the canonical digest. It answers: which lin
 
 ### Identity
 
-Identity summarizes cross-path content movement as file-DNA flow:
+`view [commit] --identity [--no-cache]`, `view [commit] --identity-from [--no-cache]`, and `view [commit] --identity-to [--no-cache]` print file-continuity views over cross-path moves. Same-file moves stay in the content view.
+
+```sh
+blockcommit view --identity
+blockcommit view --identity-from
+blockcommit view --identity-to
+```
 
 ```text
 a.ts:10 -> b.ts:12 (6)
-from a.ts:10 => b.ts (6/10, 60%), unmoved (4/10, 40%)
-to b.ts:12 <= a.ts (6/12, 50%), new (6/12, 50%)
+a.ts:10  ->  b.ts     (6/10, 60%)
+b.ts:12  <-  a.ts  (6/12, 50%)
 ```
 
-This answers: where did old file content end up, and where did new file content come from?
-
-### Coupling Handoff
-
-Coupling is the compact machine handoff for downstream relation systems. It is projected directly from the digest's canonical `symbols` and block endpoints:
-
-```json
-{
-  "schema_version": "blockcommit.coupling.v1",
-  "commit": "abc123",
-  "parent": "def456",
-  "symbols": ["a.ts", "b.ts", "a.ts"],
-  "ops": [
-    ["move", 0, 1, 6, 6, 8],
-    ["insert", null, 2, 2, 0, 2]
-  ]
-}
-```
-
-Each op is:
-
-```text
-[kind, from_symbol_index, to_symbol_index, lines, from_total, to_total]
-```
-
-The totals are integer denominators copied from digest block endpoint `total_lines`. VPEL can compute percentages exactly, map ordered ops into relation events, and reduce those events into coupling/adjacency scores.
+This answers: where did old file content end up, and where did new file content come from across paths?
 
 For Git reads, blockcommit normalizes the selected repo to a tiny `.git/.bgit_cache` worktree pointer. The default selected repo is the current working repo; `--cwd` only overrides that. You can point it at a worktree or directly at its `.git` directory, and blockcommit keeps that path handling internal without checking out files.
 
@@ -138,17 +97,17 @@ Digest-producing CLI commands maintain a local store under `.git/.bgit_cache/blo
 ```text
 index.json              tracked commit graph
 digests/<commit>.json   canonical digest records
-coupling/<commit>.json  compact coupling handoff records
 ```
 
 The default range is `HEAD`, which means every commit reachable from the current `HEAD`. A bounded range keeps the view focused:
 
 ```sh
 blockcommit cache --range <base>..<tip>
+blockcommit cache verify --range <base>..<tip>
 blockcommit digest --range <base>..<tip> --format jsonl
 ```
 
-`cache` refreshes the graph and reports state without digesting. The default digest/view commands read and write per-commit cache records as they run; `digest --range` is the explicit way to compute and stream digests for a range.
+`cache` refreshes the graph and reports state without digesting. `cache verify` checks existing cached digest records against their referenced commits. The default digest/view commands read and write per-commit cache records as they run; `digest --range` is the explicit way to compute and stream digests for a range.
 
 ```text
 tracked 2 commits (digested 1, undigested 1, skipped 0)
@@ -161,12 +120,14 @@ Merge commits are tracked as skipped because the current digest format is single
 ## Docs
 
 - [Digest format](docs/digest-format.md): canonical JSON, schema, pairing policy, and unsupported files
-- [Views](docs/views.md): `view --view content`, `identity`, `identity-from`, `identity-to`, and `coupling`
+- [Views](docs/views.md): `view`, `view --identity`, `view --identity-from`, and `view --identity-to`
 - [Development](docs/development.md): release checks and library usage
 
 ## Compatibility
 
 The current canonical schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
+
+Version 0.7 narrows the CLI around the persistent store. History verification now lives under `cache verify`; the standalone `verify` command and the downstream-specific coupling view/export were removed.
 
 Runtime schema validation is available to consumers:
 

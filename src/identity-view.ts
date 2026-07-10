@@ -2,6 +2,7 @@ import { type BlockCommitDigest } from "./types";
 
 export interface IdentityRenderOptions {
   pretty?: boolean;
+  includeRemainder?: boolean;
 }
 
 // Pairwise file-identity flow view over the digest. Each line aggregates
@@ -15,13 +16,13 @@ export function renderIdentity(digest: BlockCommitDigest): string {
 
 export function renderIdentityFrom(digest: BlockCommitDigest, options: IdentityRenderOptions = {}): string {
   const flows = identityFlows(digest);
-  const lines = options.pretty === true ? renderPrettySources(flows) : renderIdentitySources(flows);
+  const lines = options.pretty === true ? renderPrettySources(flows, options) : renderIdentitySources(flows);
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
 export function renderIdentityTo(digest: BlockCommitDigest, options: IdentityRenderOptions = {}): string {
   const flows = identityFlows(digest);
-  const lines = options.pretty === true ? renderPrettyDestinations(flows) : renderIdentityDestinations(flows);
+  const lines = options.pretty === true ? renderPrettyDestinations(flows, options) : renderIdentityDestinations(flows);
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
@@ -106,24 +107,24 @@ function renderIdentityDestinations(flows: IdentityFlow[]): string[] {
   return lines;
 }
 
-function renderPrettySources(flows: IdentityFlow[]): string[] {
-  const rows = sourceRows(flows);
+function renderPrettySources(flows: IdentityFlow[], options: IdentityRenderOptions): string[] {
+  const rows = sourceRows(flows, options);
   return renderPrettyRows(rows);
 }
 
-function renderPrettyDestinations(flows: IdentityFlow[]): string[] {
-  const rows = destinationRows(flows);
+function renderPrettyDestinations(flows: IdentityFlow[], options: IdentityRenderOptions): string[] {
+  const rows = destinationRows(flows, options);
   return renderPrettyRows(rows);
 }
 
 interface PrettyRow {
   endpoint: string;
-  arrow: "=>" | "<=" | "";
+  arrow: "->" | "<-" | "";
   peer: string;
   share: string;
 }
 
-function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
+function sourceRows(flows: IdentityFlow[], options: IdentityRenderOptions = {}): PrettyRow[] {
   const flowsBySrc = groupBy(flows, (flow) => flow.srcPath);
   const rows: PrettyRow[] = [];
   for (const srcPath of [...flowsBySrc.keys()].sort(comparePath)) {
@@ -136,7 +137,7 @@ function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
     for (const flow of srcFlows) {
       rows.push({
         endpoint: first ? `${quotePath(srcPath)}:${srcLines}` : "",
-        arrow: "=>",
+        arrow: "->",
         peer: quotePath(flow.dstPath),
         share: formatShare(flow.movedLines, srcLines)
       });
@@ -144,7 +145,7 @@ function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
     }
     const movedLines = srcFlows.reduce((sum, flow) => sum + flow.movedLines, 0);
     const unmovedLines = Math.max(0, srcLines - movedLines);
-    if (unmovedLines > 0) {
+    if (options.includeRemainder !== false && unmovedLines > 0) {
       rows.push({
         endpoint: first ? `${quotePath(srcPath)}:${srcLines}` : "",
         arrow: "",
@@ -156,7 +157,7 @@ function sourceRows(flows: IdentityFlow[]): PrettyRow[] {
   return rows;
 }
 
-function destinationRows(flows: IdentityFlow[]): PrettyRow[] {
+function destinationRows(flows: IdentityFlow[], options: IdentityRenderOptions = {}): PrettyRow[] {
   const flowsByDst = groupBy(flows, (flow) => flow.dstPath);
   const rows: PrettyRow[] = [];
   for (const dstPath of [...flowsByDst.keys()].sort(comparePath)) {
@@ -169,7 +170,7 @@ function destinationRows(flows: IdentityFlow[]): PrettyRow[] {
     for (const flow of dstFlows) {
       rows.push({
         endpoint: first ? `${quotePath(dstPath)}:${dstLines}` : "",
-        arrow: "<=",
+        arrow: "<-",
         peer: quotePath(flow.srcPath),
         share: formatShare(flow.movedLines, dstLines)
       });
@@ -177,7 +178,7 @@ function destinationRows(flows: IdentityFlow[]): PrettyRow[] {
     }
     const movedLines = dstFlows.reduce((sum, flow) => sum + flow.movedLines, 0);
     const newLines = Math.max(0, dstLines - movedLines);
-    if (newLines > 0) {
+    if (options.includeRemainder !== false && newLines > 0) {
       rows.push({
         endpoint: first ? `${quotePath(dstPath)}:${dstLines}` : "",
         arrow: "",
@@ -194,7 +195,7 @@ function renderPrettyRows(rows: PrettyRow[]): string[] {
   const arrowWidth = maxWidth(rows.map((row) => row.arrow));
   const peerWidth = maxWidth(rows.map((row) => row.peer));
   return rows.map((row) =>
-    `  ${row.endpoint.padEnd(endpointWidth)}  ${row.arrow.padEnd(arrowWidth)}  ${row.peer.padEnd(peerWidth)}  ${row.share}`
+    `${row.endpoint.padEnd(endpointWidth)}  ${row.arrow.padEnd(arrowWidth)}  ${row.peer.padEnd(peerWidth)}  ${row.share}`
   );
 }
 

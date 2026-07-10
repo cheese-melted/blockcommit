@@ -1,6 +1,6 @@
 {
   "name": "blockcommit",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Convert git commits into line-move block digests",
   "type": "module",
   "license": "MIT",
