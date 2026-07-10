@@ -1,4 +1,4 @@
-import { type GitTrailsDigest } from "./types";
+import { type GitTrailsDigest } from "./types.js";
 
 export interface IdentityRenderOptions {
   pretty?: boolean;

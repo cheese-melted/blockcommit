@@ -1,6 +1,8 @@
 import {
+  chmodSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -10,9 +12,9 @@ import {
   writeFileSync
 } from "node:fs";
 import { resolve } from "node:path";
-import { computeDigestFor } from "./digest";
-import { listCommitGraphInfos, resolveRepoStorePath, type CommitGraphInfo, type CommitInfo } from "./git";
-import { digestAlgorithm, schemaVersion, type GitTrailsDigest } from "./types";
+import { computeDigestFor } from "./digest.js";
+import { listCommitGraphInfos, resolveRepoStorePath, type CommitGraphInfo, type CommitInfo } from "./git.js";
+import { digestAlgorithm, schemaVersion, type GitTrailsDigest } from "./types.js";
 
 export const commitStoreSchemaVersion = "git-trails.commit-store.v2";
 
@@ -244,8 +246,27 @@ function storePaths(root: string): StorePaths {
     digests: resolve(root, "digests"),
     lock: resolve(root, "index.lock")
   };
-  mkdirSync(paths.digests, { recursive: true });
+  ensurePrivateDirectory(paths.root);
+  ensurePrivateDirectory(paths.digests);
   return paths;
+}
+
+function ensurePrivateDirectory(path: string): void {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if (!isErrorCode(error, "EEXIST")) {
+      throw error;
+    }
+  }
+  const stats = lstatSync(path);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`refusing Git cache path because it is a symbolic link: ${path}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`refusing Git cache path because it is not a directory: ${path}`);
+  }
+  chmodSync(path, 0o700);
 }
 
 function objectPath(dir: string, commit: string): string {
@@ -269,7 +290,7 @@ function saveIndex(paths: StorePaths, index: StoredIndex): void {
 
 function writeJson(path: string, value: unknown): void {
   const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value)}\n`);
+  writeFileSync(tmp, `${JSON.stringify(value)}\n`, { mode: 0o600 });
   renameSync(tmp, path);
 }
 
@@ -321,7 +342,7 @@ function acquireIndexLock(path: string): number {
   const waiter = new Int32Array(new SharedArrayBuffer(4));
   for (let attempt = 0; attempt < 500; attempt += 1) {
     try {
-      const descriptor = openSync(path, "wx");
+      const descriptor = openSync(path, "wx", 0o600);
       try {
         writeFileSync(descriptor, `${process.pid}\n`);
         return descriptor;

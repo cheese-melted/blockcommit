@@ -4,11 +4,13 @@
 
 ## Canonicality
 
-The digest excludes local checkout paths and other machine-local facts. Cached digests are stored in `.git-trails` next to the selected repository's `.git` entry and can be checked against their referenced commits:
+The digest excludes local checkout paths and other machine-local facts. Cached digests are stored in `git-trails/` under the selected repository's Git common directory and are shared by linked worktrees. They can be checked against their referenced commits:
 
 ```sh
 git trails cache verify --cwd /path/to/repo
 ```
+
+The store contains changed-line source payloads, including content deleted from later commits. Treat it as sensitive repository data.
 
 The current schema is `git-trails.digest.v4`, shipped as `schema/git-trails.digest.v4.schema.json` and exported as `git-trails/schema/git-trails.digest.v4.schema.json`.
 
@@ -38,7 +40,7 @@ Coordinate semantics:
   "schema_version": "git-trails.digest.v4",
   "algorithm": {
     "name": "exact-line-sha256-identity-preserving",
-    "version": 2,
+    "version": 3,
     "anchor_min_alnum": 4,
     "exact_block_fallback": true,
     "whole_file_identity": true,
@@ -126,7 +128,7 @@ The embedded algorithm metadata is:
 ```json
 {
   "name": "exact-line-sha256-identity-preserving",
-  "version": 2,
+  "version": 3,
   "anchor_min_alnum": 4,
   "exact_block_fallback": true,
   "whole_file_identity": true,
@@ -134,13 +136,14 @@ The embedded algorithm metadata is:
 }
 ```
 
-Git diff input is pinned with `--no-renames`, `--diff-algorithm=myers`, `--no-indent-heuristic`, `--full-index`, `--abbrev=40`, `--no-ext-diff`, `--no-color`, `--no-textconv`, `--submodule=short`, and `--unified=0`.
+Git diff input is pinned with `--text`, `--no-renames`, `--diff-algorithm=myers`, `--no-indent-heuristic`, `--full-index`, `--abbrev=40`, `--no-ext-diff`, `--no-color`, `--no-textconv`, `--submodule=short`, and `--unified=0`. Changed files are then sorted by path using ascending ECMAScript string order. Binary classification uses the digest algorithm's own NUL-byte scan over the first 8,000 bytes rather than Git attributes.
 
 ## Unsupported Files
 
 When a file cannot be faithfully represented as line blocks, it remains in `files[]` with `line_digest_status: "unsupported"` and an `unsupported_reason`: `"binary"`, `"mode_only"`, `"submodule"`, `"filetype"`, or `"unparsed_diff"`.
 
 - Binary files are not represented as line blocks. They report `old_lines: 0`, `new_lines: 0`, and `unsupported_reason: "binary"`.
+- Git paths must be valid UTF-8. Repositories containing changed paths with invalid UTF-8 bytes are rejected rather than decoded lossily.
 - Merge commits are rejected. `cache verify --range` skips them.
 - Root commits diff against the empty tree.
 - Submodule pointer changes, mode-only changes, and file-type changes are represented at file level with unsupported metadata.

@@ -4,6 +4,8 @@
 
 ## Install
 
+Git 2.29 or newer and Node.js 22 or newer are required.
+
 Install globally from npm:
 
 ```sh
@@ -22,7 +24,7 @@ npx git-trails view
 
 All commands default to the current working repo. Use `--cwd <path>` only when reading another worktree or a `.git` directory directly.
 
-By default, commands that compute commit digests read from and write to `.git-trails`, next to the repository's `.git` entry. Add `--no-cache` to bypass the persistent store for a single run.
+By default, commands that compute commit digests read from and write to `git-trails/` under the repository's Git common directory (`.git/git-trails/` in a standard checkout). Linked worktrees share this store. Add `--no-cache` to bypass the persistent store for a single run.
 
 ### Digest
 
@@ -95,10 +97,12 @@ b.ts:12  <-  a.ts  (6/12, 50%)
 Digest and view commands use a repository-local store by default:
 
 ```text
-.git-trails/
+.git/git-trails/
   index.json              tracked commit graph
   digests/<commit>.json   canonical digest records
 ```
+
+Cached digests contain changed-line source payloads, including deleted lines. Treat the store as sensitive repository data. New store directories and files are created with user-only permissions.
 
 ```sh
 git trails cache

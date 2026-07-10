@@ -1,4 +1,4 @@
-import { nullPath, type GitTrailsDigest, type LineMoveBlock, type LineSpan } from "./types";
+import { nullPath, type GitTrailsDigest, type LineMoveBlock, type LineSpan } from "./types.js";
 
 // Compact content view over the digest: one line per block. src coordinates
 // are parent-image, dst coordinates are post-image, and path:start+count means

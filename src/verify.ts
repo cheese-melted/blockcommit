@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
-import { computeDigest, computeDigestFor, type DigestComputation, type DigestOptions, type FileState } from "./digest";
-import { type CommitInfo } from "./git";
-import { countLineBytes, type LineRecord } from "./lines";
-import { validateDigest } from "./validate";
+import { computeDigest, computeDigestFor, type DigestComputation, type DigestOptions, type FileState } from "./digest.js";
+import { type CommitInfo } from "./git.js";
+import { countLineBytes, type LineRecord } from "./lines.js";
+import { validateDigest } from "./validate.js";
 import {
   type GitTrailsDigest,
   type ChangedFileDigest,
   type FileVerification,
   type LineMoveBlock,
   type VerifyResult
-} from "./types";
+} from "./types.js";
 
 export interface VerifyDigestOptions {
   cwd?: string;

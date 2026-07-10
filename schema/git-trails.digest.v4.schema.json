@@ -75,7 +75,7 @@
       "required": ["name", "version", "anchor_min_alnum", "exact_block_fallback", "whole_file_identity", "git_diff"],
       "properties": {
         "name": { "const": "exact-line-sha256-identity-preserving" },
-        "version": { "const": 2 },
+        "version": { "const": 3 },
         "anchor_min_alnum": { "const": 4 },
         "exact_block_fallback": { "const": true },
         "whole_file_identity": { "const": true },

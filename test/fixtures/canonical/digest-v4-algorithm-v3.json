@@ -1,0 +1,163 @@
+{
+  "schema_version": "git-trails.digest.v4",
+  "algorithm": {
+    "name": "exact-line-sha256-identity-preserving",
+    "version": 3,
+    "anchor_min_alnum": 4,
+    "exact_block_fallback": true,
+    "whole_file_identity": true,
+    "git_diff": {
+      "algorithm": "myers",
+      "indent_heuristic": false
+    }
+  },
+  "commit": "f1e865986984bf9305a988bb1ff950cab7e57a74",
+  "parent": "d7e598f1a9a349ef50c0fece9f6a35698d4a42e5",
+  "symbols": [
+    "a.txt",
+    "m.txt",
+    "z.txt"
+  ],
+  "files": [
+    {
+      "path": "a.txt",
+      "old_exists": true,
+      "new_exists": true,
+      "old_mode": "100644",
+      "new_mode": "100644",
+      "old_oid": "130e2ace0dc9f2ad999d5173258880e12075bbc3",
+      "new_oid": "4a58007052a65fbc2fc3f910f2855f45a4058e74",
+      "binary": false,
+      "old_lines": 2,
+      "new_lines": 1,
+      "old_sha256": "16ec10125ec9a68a28ccd9dd6c60a76e1f151da03082c5e51c80c4377321cb62",
+      "new_sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+      "line_digest_status": "represented"
+    },
+    {
+      "path": "binary.dat",
+      "old_exists": true,
+      "new_exists": true,
+      "old_mode": "100644",
+      "new_mode": "100644",
+      "old_oid": "2ba219bec224c94416e6484e38cc23247b2ceaba",
+      "new_oid": "6ed5d512a5248c3e26f30071434862cdfc48984a",
+      "binary": true,
+      "old_lines": 0,
+      "new_lines": 0,
+      "old_sha256": "474e07c3adaa4cbe2eb376e49f749b8f62ecb573a6fc949ab316b0285027bb89",
+      "new_sha256": "453fc850e7d77f683c05a8238159d0bb8232f31effb678cc82dc0ab082a1bc26",
+      "line_digest_status": "unsupported",
+      "unsupported_reason": "binary"
+    },
+    {
+      "path": "m.txt",
+      "old_exists": false,
+      "new_exists": true,
+      "old_mode": null,
+      "new_mode": "100644",
+      "old_oid": null,
+      "new_oid": "0376667ffb93ba2cfc45b90ef7c73331254aea0c",
+      "binary": false,
+      "old_lines": 0,
+      "new_lines": 2,
+      "old_sha256": null,
+      "new_sha256": "7b7eea7d88f0202b4550f336e07906d164d18f768bf8db1133928c92f32a9477",
+      "line_digest_status": "represented"
+    },
+    {
+      "path": "z.txt",
+      "old_exists": true,
+      "new_exists": true,
+      "old_mode": "100644",
+      "new_mode": "100644",
+      "old_oid": "fd08df0afa4d1d3faece37798d169e5a46d9d3fd",
+      "new_oid": "68147bf6289d98c29389e2689b8fa1f0d9508a87",
+      "binary": false,
+      "old_lines": 1,
+      "new_lines": 2,
+      "old_sha256": "2088d0c4b41022d90f663fa8d8156cb525241b55d30ecdf922c38f94f7efda4c",
+      "new_sha256": "3d6373603fa32f4d789b42ea7ed0a9a603b928ed3c2bb2f34906c86dcee21d2b",
+      "line_digest_status": "represented"
+    }
+  ],
+  "blocks": [
+    {
+      "id": "gt_91969314a96a42a1",
+      "payload_sha256": "655022221a6c298c23e157941f71d33d487c1e889f72ea95fdd8b3f352a3827a",
+      "payload_bytes": 15,
+      "payload_lines": 1,
+      "payload_encoding": "utf-8",
+      "payload_text": "move this line\n",
+      "kind": "move",
+      "src": {
+        "path": "a.txt",
+        "start_line": 2,
+        "end_line": 2,
+        "line_count": 1,
+        "byte_start": 6,
+        "byte_end": 21,
+        "symbol": 0,
+        "total_lines": 2
+      },
+      "dst": {
+        "path": "m.txt",
+        "start_line": 1,
+        "end_line": 1,
+        "line_count": 1,
+        "byte_start": 0,
+        "byte_end": 15,
+        "symbol": 1,
+        "total_lines": 2
+      }
+    },
+    {
+      "id": "gt_fa72986598a85d30",
+      "payload_sha256": "061da4619a30ed06f2d1daf4c9ffe3225753d02d9c73b20dcc85f92c2951fdc9",
+      "payload_bytes": 9,
+      "payload_lines": 1,
+      "payload_encoding": "utf-8",
+      "payload_text": "new line\n",
+      "kind": "insert",
+      "src": null,
+      "dst": {
+        "path": "m.txt",
+        "start_line": 2,
+        "end_line": 2,
+        "line_count": 1,
+        "byte_start": 15,
+        "byte_end": 24,
+        "symbol": 1,
+        "total_lines": 2
+      }
+    },
+    {
+      "id": "gt_6a30e80fccd28270",
+      "payload_sha256": "7f8b1dfc466b6249f06cbe55c9174df2578e7754da793fded244ef5cba2a38f1",
+      "payload_bytes": 8,
+      "payload_lines": 1,
+      "payload_encoding": "utf-8",
+      "payload_text": "changed\n",
+      "kind": "insert",
+      "src": null,
+      "dst": {
+        "path": "z.txt",
+        "start_line": 2,
+        "end_line": 2,
+        "line_count": 1,
+        "byte_start": 5,
+        "byte_end": 13,
+        "symbol": 2,
+        "total_lines": 2
+      }
+    }
+  ],
+  "identity": [],
+  "summary": {
+    "files": 4,
+    "blocks": 3,
+    "moves": 1,
+    "insertions": 2,
+    "deletions": 0
+  }
+}

@@ -2,7 +2,7 @@ import {
   type ChangedFileDigest,
   type IdentityEvent,
   type LineMoveBlock
-} from "./types";
+} from "./types.js";
 
 interface DestinationAggregate {
   path: string;

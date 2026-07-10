@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { computeDigestFor, digestCommit } from "./digest";
-import { getCommitInfo, listCommitInfos } from "./git";
-import { renderContent } from "./content";
-import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
-import { cachedDigestForInfo, cachedDigestRecordForInfo, commitStoreView, renderCommitStoreView } from "./store";
-import { verifyDigest } from "./verify";
-import { type GitTrailsDigest, type VerifyResult } from "./types";
-import { type CommitInfo } from "./git";
+import { computeDigestFor, digestCommit } from "./digest.js";
+import { getCommitInfo, listCommitInfos } from "./git.js";
+import { renderContent } from "./content.js";
+import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view.js";
+import { cachedDigestForInfo, cachedDigestRecordForInfo, commitStoreView, renderCommitStoreView } from "./store.js";
+import { verifyDigest } from "./verify.js";
+import { type GitTrailsDigest, type VerifyResult } from "./types.js";
+import { type CommitInfo } from "./git.js";
 
 type Format = "json" | "jsonl";
 type ViewType = "content" | "identity" | "identity-from" | "identity-to";
@@ -408,7 +408,7 @@ Options:
   --no-cache
             bypass the persistent store for digest/view commands. By
             default, computed digests are read from or written to
-            .git-trails next to the repository's .git entry.
+            git-trails under the repository's Git common directory.
   --view <type>
             choose a view: content, identity, identity-from, or identity-to.
             Defaults to content.

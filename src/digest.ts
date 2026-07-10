@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { getCommitInfo, readChangedFilePairs, type CommitInfo, type FilePair } from "./git";
-import { deriveIdentity } from "./identity";
+import { getCommitInfo, readChangedFilePairs, type CommitInfo, type FilePair } from "./git.js";
+import { deriveIdentity } from "./identity.js";
 import {
   concatLineBytes,
   isBinary,
   spanForLines,
   splitLineRecords,
   type LineRecord
-} from "./lines";
+} from "./lines.js";
 import {
   digestAlgorithm,
   schemaVersion,
@@ -20,7 +20,7 @@ import {
   type LineSpan,
   type UnsupportedReason,
   type PayloadEncoding
-} from "./types";
+} from "./types.js";
 
 interface RemovedLine {
   line: LineRecord;
@@ -98,7 +98,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
   for (const pair of pairs) {
     const oldBytes = pair.oldBytes ?? Buffer.alloc(0);
     const newBytes = pair.newBytes ?? Buffer.alloc(0);
-    const binary = pair.gitBinary || isBinary(oldBytes) || isBinary(newBytes);
+    const binary = isBinary(oldBytes) || isBinary(newBytes);
     const oldLines = binary ? [] : splitLineRecords(pair.path, oldBytes);
     const newLines = binary ? [] : splitLineRecords(pair.path, newBytes);
     const status = classifyFile(pair, binary, oldBytes, newBytes);

@@ -1,5 +1,5 @@
-export { digestCommit, type DigestOptions } from "./digest";
-export { renderContent } from "./content";
+export { digestCommit, type DigestOptions } from "./digest.js";
+export { renderContent } from "./content.js";
 export {
   cachedDigestForInfo,
   commitStoreSchemaVersion,
@@ -10,7 +10,7 @@ export {
   type CommitStoreStatus,
   type CommitStoreSummary,
   type CommitStoreView
-} from "./store";
+} from "./store.js";
 export {
   identityFlows,
   renderIdentity,
@@ -18,14 +18,14 @@ export {
   renderIdentityTo,
   type IdentityFlow,
   type IdentityRenderOptions
-} from "./identity-view";
+} from "./identity-view.js";
 export {
   validateDigest,
   type DigestValidationIssue,
   type DigestValidationResult
-} from "./validate";
-export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
-export { digestAlgorithm, schemaVersion } from "./types";
+} from "./validate.js";
+export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify.js";
+export { digestAlgorithm, schemaVersion } from "./types.js";
 export type {
   GitTrailsDigest,
   GitTrailsSummary,
@@ -47,4 +47,4 @@ export type {
   PayloadEncoding,
   UnsupportedReason,
   VerifyResult
-} from "./types";
+} from "./types.js";

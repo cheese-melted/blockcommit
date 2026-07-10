@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import Ajv, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
-import { schemaVersion, type GitTrailsDigest } from "./types";
+import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
+import { schemaVersion, type GitTrailsDigest } from "./types.js";
 
 export interface DigestValidationIssue {
   path: string;
@@ -32,7 +32,7 @@ function digestSchemaValidator(): ValidateFunction {
 
   const schemaUrl = new URL(`../schema/${schemaVersion}.schema.json`, import.meta.url);
   const schema = JSON.parse(readFileSync(schemaUrl, "utf8"));
-  const ajv = new Ajv({ strict: false, allErrors: true });
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
   compiledDigestSchema = ajv.compile<GitTrailsDigest>(schema);
   return compiledDigestSchema;
 }

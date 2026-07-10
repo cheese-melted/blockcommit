@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { TextDecoder } from "node:util";
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const gitlinkMode = "160000";
+const utf8PathDecoder = new TextDecoder("utf-8", { fatal: true });
+const minimumGitVersion = [2, 29] as const;
 
 export interface CommitInfo {
   repo: string;
@@ -32,7 +35,6 @@ export interface FilePair {
   oldBytes: Buffer | null;
   newBytes: Buffer | null;
   diff: string;
-  gitBinary: boolean;
   unparsedDiff: boolean;
 }
 
@@ -126,16 +128,19 @@ function tryResolveRepo(cwd: string): ResolvedRepo | null {
     cwd,
     encoding: "utf8"
   });
+  if (isMissingGitExecutable(direct.error)) {
+    throw new Error("git executable not found on PATH");
+  }
   if (direct.status === 0) {
     const gitDir = resolve(direct.stdout.trim());
-    return { repo: gitDir, store: resolveStorePath(cwd, gitDir) };
+    return { repo: gitDir, store: resolveStorePath(cwd) };
   }
 
   const gitDir = resolve(cwd);
   if (!isPointedGitDir(gitDir)) {
     return null;
   }
-  return { repo: gitDir, store: resolveStorePath(cwd, gitDir) };
+  return { repo: gitDir, store: resolveStorePath(gitDir) };
 }
 
 function isPointedGitDir(path: string): boolean {
@@ -156,31 +161,38 @@ function isPointedGitDir(path: string): boolean {
   return bare.status === 0 && bare.stdout.trim() === "false";
 }
 
-function resolveStorePath(cwd: string, gitDir: string): string {
-  const topLevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+function resolveStorePath(cwd: string): string {
+  const commonDir = spawnSync("git", ["rev-parse", "--git-common-dir"], {
     cwd,
     encoding: "utf8"
   });
-  if (topLevel.status === 0) {
-    return resolve(topLevel.stdout.trim(), ".git-trails");
+  if (commonDir.status !== 0) {
+    throw new Error(`cannot locate the Git common directory for: ${cwd}`);
   }
-
-  const worktreePointer = resolve(gitDir, "gitdir");
-  if (existsSync(worktreePointer)) {
-    return resolve(dirname(readFileSync(worktreePointer, "utf8").trim()), ".git-trails");
-  }
-
-  if (basename(gitDir) === ".git") {
-    return resolve(gitDir, "..", ".git-trails");
-  }
-
-  throw new Error(`cannot locate the worktree for Git directory: ${gitDir}`);
+  return resolve(cwd, commonDir.stdout.trim(), "git-trails");
 }
 
 function assertSha1ObjectFormat(repo: string): void {
+  assertSupportedGitVersion(repo);
   const objectFormat = gitText(repo, ["rev-parse", "--show-object-format"]).trim();
   if (objectFormat !== "sha1") {
     throw new Error(`git-trails digest v4 only supports sha1 Git object format, got ${objectFormat}`);
+  }
+}
+
+function assertSupportedGitVersion(repo: string): void {
+  const output = gitText(repo, ["--version"]).trim();
+  const match = /git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(output);
+  if (match === null) {
+    throw new Error(`cannot determine Git version from: ${output}`);
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (
+    major < minimumGitVersion[0] ||
+    (major === minimumGitVersion[0] && minor < minimumGitVersion[1])
+  ) {
+    throw new Error(`git-trails requires Git 2.29 or newer; found ${output}`);
   }
 }
 
@@ -192,6 +204,7 @@ export function readChangedFilePairs(info: CommitInfo): FilePair[] {
   const { entries, patch } = splitRawAndPatch(
     gitBuffer(info.repo, [
       "diff",
+      "--text",
       "--raw",
       "--patch",
       "-z",
@@ -239,12 +252,15 @@ export function readChangedFilePairs(info: CommitInfo): FilePair[] {
       oldBytes: oldIsBlob ? blobs.get(entry.oldSha) ?? null : null,
       newBytes: newIsBlob ? blobs.get(entry.newSha) ?? null : null,
       diff,
-      gitBinary: /^Binary files /m.test(diff) || /^GIT binary patch/m.test(diff),
       unparsedDiff: !parsedSections
     });
   }
 
-  return pairs;
+  // Git path ordering can be changed by ambient diff.orderFile settings.
+  // Canonical output uses ascending ECMAScript string order instead.
+  return pairs.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  );
 }
 
 function patchSectionsFor(entry: RawEntry): number {
@@ -292,7 +308,7 @@ function splitRawAndPatch(output: Buffer): { entries: RawEntry[]; patch: string 
       oldSha,
       newSha,
       status,
-      path: output.subarray(metaEnd + 1, pathEnd).toString("utf8")
+      path: decodeGitPath(output.subarray(metaEnd + 1, pathEnd))
     });
     cursor = pathEnd + 1;
   }
@@ -301,6 +317,16 @@ function splitRawAndPatch(output: Buffer): { entries: RawEntry[]; patch: string 
     cursor += 1;
   }
   return { entries, patch: output.subarray(cursor).toString("utf8") };
+}
+
+function decodeGitPath(bytes: Buffer): string {
+  try {
+    return utf8PathDecoder.decode(bytes);
+  } catch {
+    throw new Error(
+      `git-trails does not support non-UTF-8 Git paths (raw bytes: ${bytes.toString("hex")})`
+    );
+  }
 }
 
 function splitPatchSections(patch: string): string[] {
@@ -363,10 +389,18 @@ function gitBuffer(cwd: string, args: string[], input?: string): Buffer {
     maxBuffer: 1024 * 1024 * 1024
   });
 
+  if (isMissingGitExecutable(result.error)) {
+    throw new Error("git executable not found on PATH");
+  }
+
   if (result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : String(result.stderr);
     throw new Error(`git ${args.join(" ")} failed: ${stderr.trim()}`);
   }
 
   return Buffer.from(result.stdout as Buffer);
+}
+
+function isMissingGitExecutable(error: Error | undefined): boolean {
+  return error !== undefined && "code" in error && error.code === "ENOENT";
 }

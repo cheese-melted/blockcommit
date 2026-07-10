@@ -5,35 +5,59 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          - os: ubuntu-latest
+            node-version: 22
+          - os: ubuntu-latest
+            node-version: 24
+          - os: windows-latest
+            node-version: 22
+          - os: macos-latest
+            node-version: 22
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: reject legacy package name
+        run: |
+          ! grep -R "block[c]ommit" \
+            --exclude-dir=.git \
+            --exclude=bun.lock \
+            .
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
       - run: bun install --frozen-lockfile
       - run: bun test
+      - run: bun run typecheck:test
       - run: bun run build
       - name: smoke test npm package
         run: |
           npm pack --dry-run
           package="$(npm pack)"
+          package_path="$PWD/$package"
           tmp="$(mktemp -d)"
           cd "$tmp"
-          npm init -y >/dev/null
-          npm install "$GITHUB_WORKSPACE/$package"
-          npx blockcommit --help >/dev/null
+          cp -R "$GITHUB_WORKSPACE/test/fixtures/node-next-consumer/." .
+          npm install "$package_path"
+          npm exec --offline -- git-trails --help >/dev/null
           node --input-type=module - <<'NODE'
           import { createRequire } from "node:module";
           import { readFileSync } from "node:fs";
 
-          const module = await import("blockcommit");
+          const module = await import("git-trails");
           const expected = [
             "digestAlgorithm",
             "digestCommit",
@@ -54,16 +78,19 @@ jobs:
           }
 
           const require = createRequire(import.meta.url);
-          const schemaPath = require.resolve("blockcommit/schema/blockcommit.digest.v4.schema.json");
+          const schemaPath = require.resolve(
+            "git-trails/schema/git-trails.digest.v4.schema.json"
+          );
           const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
-          if (schema.properties?.schema_version?.const !== "blockcommit.digest.v4") {
+          if (schema.properties?.schema_version?.const !== "git-trails.digest.v4") {
             throw new Error("packed schema export is invalid");
           }
-          const validation = module.validateDigest({ schema_version: "blockcommit.digest.v4" });
+          const validation = module.validateDigest({ schema_version: "git-trails.digest.v4" });
           if (validation.ok || validation.errors.length === 0) {
             throw new Error("packed validateDigest export is invalid");
           }
           NODE
+          npm exec --offline -- tsc --noEmit
       # The published bin runs under node, not bun; exercise dist/cli.js the
       # way an npm user would. A synthetic repo keeps this independent of the
       # checkout's depth and of pull_request merge commits (which digest
@@ -84,3 +111,64 @@ jobs:
           range="$(git -C "$repo" rev-list --max-parents=0 HEAD)..HEAD"
           node dist/cli.js digest --range "$range" --format jsonl --cwd "$repo" > /dev/null
           node dist/cli.js cache verify --range "$range" --cwd "$repo"
+
+  canonical-git:
+    name: canonical digest (${{ matrix.label }} Git)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - label: minimum
+            git-version: 2.29.0
+          - label: runner
+            git-version: system
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: install minimum Git
+        if: matrix.git-version != 'system'
+        env:
+          GIT_VERSION: ${{ matrix.git-version }}
+        run: |
+          prefix="$RUNNER_TEMP/git-$GIT_VERSION-install"
+          archive="$RUNNER_TEMP/git-$GIT_VERSION.tar.xz"
+          curl -fsSL \
+            "https://www.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz" \
+            -o "$archive"
+          echo "28432d995257c4626fe0fb2091f588df6eed98e9571419e72c83bc23372e6b89  $archive" |
+            sha256sum --check
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          make -C "$RUNNER_TEMP/git-$GIT_VERSION" -j2 \
+            prefix="$prefix" \
+            NO_CURL=YesPlease \
+            NO_EXPAT=YesPlease \
+            NO_GETTEXT=YesPlease \
+            NO_PERL=YesPlease \
+            NO_PYTHON=YesPlease \
+            NO_TCLTK=YesPlease \
+            install >/dev/null
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+      - run: bun install --frozen-lockfile
+      - name: verify canonical golden digest
+        run: |
+          git --version
+          bun test --test-name-pattern \
+            'canonical digests ignore ambient|canonical algorithm v3 golden digest'
+
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: run benchmark harness
+        run: bun run bench > benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.sha }}
+          path: benchmark.json
+          if-no-files-found: error

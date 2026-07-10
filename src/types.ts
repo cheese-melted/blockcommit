@@ -2,7 +2,7 @@ export const nullPath = "/dev/null";
 export const schemaVersion = "git-trails.digest.v4";
 export const digestAlgorithm = {
   name: "exact-line-sha256-identity-preserving",
-  version: 2,
+  version: 3,
   anchor_min_alnum: 4,
   exact_block_fallback: true,
   whole_file_identity: true,
