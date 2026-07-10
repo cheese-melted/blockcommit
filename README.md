@@ -52,11 +52,11 @@ blockcommit cache --format json
 
 ## Views
 
-The views are intentionally separated so each one has a narrow job.
+Views are readable projections of the canonical digest. They do not replace the JSON format.
 
 ### Content
 
-`view [commit] [--no-cache]` prints ordered content operations over moved, inserted, and deleted blocks. `content` is the default view.
+`view [commit]` prints ordered moves, insertions, and deletions. This is the default view.
 
 ```sh
 blockcommit view
@@ -68,11 +68,11 @@ M a.ts:1+6 -> b.ts:1+6
 - src/dead.ts:1+20
 ```
 
-This is the closest readable view of the canonical digest. It answers: which line blocks moved, appeared, or disappeared?
+Source coordinates refer to the parent tree; destination coordinates refer to the selected commit.
 
 ### Identity
 
-`view [commit] --identity [--no-cache]`, `view [commit] --identity-from [--no-cache]`, and `view [commit] --identity-to [--no-cache]` print file-continuity views over cross-path moves. Same-file moves stay in the content view.
+Identity views summarize cross-path movement. Same-file moves remain in the content view.
 
 ```sh
 blockcommit view --identity
@@ -86,28 +86,25 @@ a.ts:10  ->  b.ts     (6/10, 60%)
 b.ts:12  <-  a.ts  (6/12, 50%)
 ```
 
-This answers: where did old file content end up, and where did new file content come from across paths?
-
-For Git reads, blockcommit normalizes the selected repo to a tiny `.git/.bgit_cache` worktree pointer. The default selected repo is the current working repo; `--cwd` only overrides that. You can point it at a worktree or directly at its `.git` directory, and blockcommit keeps that path handling internal without checking out files.
+`--identity` shows pairwise flow. `--identity-from` groups destinations by old path, while `--identity-to` groups sources by new path. See [Views](docs/views.md) for the full output semantics.
 
 ## Persistent Store
 
-Digest-producing CLI commands maintain a local store under `.git/.bgit_cache/blockcommit` by default:
+Digest and view commands use a repository-local store by default:
 
 ```text
 index.json              tracked commit graph
 digests/<commit>.json   canonical digest records
 ```
 
-The default range is `HEAD`, which means every commit reachable from the current `HEAD`. A bounded range keeps the view focused:
-
 ```sh
+blockcommit cache
 blockcommit cache --range <base>..<tip>
 blockcommit cache verify --range <base>..<tip>
 blockcommit digest --range <base>..<tip> --format jsonl
 ```
 
-`cache` refreshes the graph and reports state without digesting. `cache verify` checks existing cached digest records against their referenced commits. The default digest/view commands read and write per-commit cache records as they run; `digest --range` is the explicit way to compute and stream digests for a range.
+`cache` reports state without computing missing digests. `digest --range` computes and streams a range, filling the store as it goes. `cache verify` checks records already present in the store.
 
 ```text
 tracked 3 commits (digested 1, undigested 1, invalid 1, skipped 0)
@@ -116,28 +113,29 @@ U 222222222222 111111111111
 I 333333333333 222222222222 malformed_digest
 ```
 
-Malformed digest JSON and records produced for an incompatible commit, schema, or algorithm are reported as `invalid`. The next digest operation for that commit recomputes and atomically replaces the record. Index updates are serialized across processes, malformed indexes are rebuilt from Git history, and interrupted temporary files are ignored.
+- `D`: a compatible digest is present.
+- `U`: no digest is present.
+- `I`: the record is malformed or incompatible and will be replaced when next digested.
+- `S`: the commit is unsupported; currently this means a merge commit.
 
-Merge commits are tracked as skipped because the current digest format is single-parent. Use `--no-cache` on digest-producing commands when you want one-off output without touching the persistent store.
+The default range is every commit reachable from `HEAD`. Use a bounded Git revision range for focused work, or `--no-cache` on digest and view commands for a one-off read.
 
-## Docs
+## Library and Schema
 
-- [Digest format](docs/digest-format.md): canonical JSON, schema, pairing policy, and unsupported files
-- [Views](docs/views.md): `view`, `view --identity`, `view --identity-from`, and `view --identity-to`
-- [Development](docs/development.md): release checks and library usage
+The canonical format is `blockcommit.digest.v4`. Its JSON Schema ships at `blockcommit/schema/blockcommit.digest.v4.schema.json`, and runtime validation is available from the package:
 
-## Compatibility
-
-The current canonical schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
-
-Version 0.7 narrows the CLI around the persistent store. History verification now lives under `cache verify`; the standalone `verify` command and the downstream-specific coupling view/export were removed.
-
-Runtime schema validation is available to consumers:
 
 ```ts
-import { validateDigest } from "blockcommit";
+import { digestCommit, validateDigest } from "blockcommit";
 
-const result = validateDigest(JSON.parse(savedDigestJson));
+const digest = digestCommit({ commit: "HEAD" });
+const result = validateDigest(digest);
 ```
 
-The digest intentionally excludes local checkout paths and other machine-local facts. Two users digesting the same commit from different checkout directories should get byte-identical JSON after normal JSON serialization.
+The package is ESM-only. Digests exclude checkout paths and other machine-local facts, so the same commit and algorithm produce byte-identical serialized JSON across checkouts.
+
+## Documentation
+
+- [Digest format](docs/digest-format.md): canonical fields, pairing policy, and unsupported files
+- [Views](docs/views.md): content, identity, and cache output
+- [Development](docs/development.md): library API and release checks
