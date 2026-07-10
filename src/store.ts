@@ -1,24 +1,36 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
 import { resolve } from "node:path";
 import { computeDigestFor } from "./digest";
 import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
 import { digestAlgorithm, schemaVersion, type BlockCommitDigest } from "./types";
 
-export const commitStoreSchemaVersion = "blockcommit.commit-store.v1";
+export const commitStoreSchemaVersion = "blockcommit.commit-store.v2";
 
-export type CommitStoreStatus = "digested" | "undigested" | "skipped";
+export type CommitStoreStatus = "digested" | "undigested" | "invalid" | "skipped";
+export type CommitStoreReason = "merge" | "malformed_digest" | "incompatible_digest";
 
 export interface CommitStoreCommit {
   commit: string;
   parents: string[];
   status: CommitStoreStatus;
-  reason?: "merge";
+  reason?: CommitStoreReason;
 }
 
 export interface CommitStoreSummary {
   tracked: number;
   digested: number;
   undigested: number;
+  invalid: number;
   skipped: number;
 }
 
@@ -29,9 +41,9 @@ export interface CommitStoreView {
   commits: CommitStoreCommit[];
 }
 
-export interface CachedDigestRecord {
-  digest: unknown;
-}
+export type CachedDigestRecord =
+  | { ok: true; digest: unknown }
+  | { ok: false; error: string };
 
 interface StoredCommit {
   commit: string;
@@ -47,6 +59,7 @@ interface StorePaths {
   root: string;
   index: string;
   digests: string;
+  lock: string;
 }
 
 const defaultRange = "HEAD";
@@ -54,32 +67,36 @@ const defaultRange = "HEAD";
 export function commitStoreView(cwd: string, range = defaultRange): CommitStoreView {
   const graph = listCommitGraphInfos(cwd, range);
   const paths = storePaths(graph[0]?.repo ?? resolveRepoCacheCwd(cwd));
-  const index = loadIndex(paths);
-  let changed = false;
+  withIndexLock(paths, () => {
+    const index = loadIndex(paths);
+    let changed = false;
 
-  for (const info of graph) {
-    const existing = index.commits[info.commit];
-    if (existing === undefined || existing.parents.join(" ") !== info.parents.join(" ")) {
-      index.commits[info.commit] = { commit: info.commit, parents: info.parents };
-      changed = true;
+    for (const info of graph) {
+      const existing = index.commits[info.commit];
+      if (existing === undefined || existing.parents.join(" ") !== info.parents.join(" ")) {
+        index.commits[info.commit] = { commit: info.commit, parents: info.parents };
+        changed = true;
+      }
     }
-  }
 
-  if (changed) {
-    saveIndex(paths, index);
-  }
+    if (changed) {
+      saveIndex(paths, index);
+    }
+  });
 
   return viewFromGraph(paths, range, graph);
 }
 
 export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
   const paths = storePaths(info.repo);
-  const index = loadIndex(paths);
-  index.commits[info.commit] = {
-    commit: info.commit,
-    parents: info.parent === null ? [] : [info.parent]
-  };
-  saveIndex(paths, index);
+  withIndexLock(paths, () => {
+    const index = loadIndex(paths);
+    index.commits[info.commit] = {
+      commit: info.commit,
+      parents: info.parent === null ? [] : [info.parent]
+    };
+    saveIndex(paths, index);
+  });
 
   const cached = readCachedDigest(paths, info);
   if (cached !== null) {
@@ -101,9 +118,10 @@ export function cachedDigestRecordForInfo(info: CommitInfo): CachedDigestRecord 
   if (!existsSync(digestPath)) {
     return null;
   }
-  return {
-    digest: JSON.parse(readFileSync(digestPath, "utf8"))
-  };
+  const parsed = readJson(digestPath);
+  return parsed.ok
+    ? { ok: true, digest: parsed.value }
+    : { ok: false, error: `malformed cached digest: ${parsed.error}` };
 }
 
 export function renderCommitStoreView(view: CommitStoreView): string {
@@ -111,11 +129,18 @@ export function renderCommitStoreView(view: CommitStoreView): string {
     `tracked ${view.summary.tracked} commits (` +
       `digested ${view.summary.digested}, ` +
       `undigested ${view.summary.undigested}, ` +
+      `invalid ${view.summary.invalid}, ` +
       `skipped ${view.summary.skipped})`
   ];
 
   for (const commit of view.commits) {
-    const marker = commit.status === "digested" ? "D" : commit.status === "undigested" ? "U" : "S";
+    const marker = commit.status === "digested"
+      ? "D"
+      : commit.status === "undigested"
+        ? "U"
+        : commit.status === "invalid"
+          ? "I"
+          : "S";
     const parent = commit.parents.length === 0
       ? "root"
       : commit.parents.length === 1
@@ -133,11 +158,12 @@ function viewFromGraph(paths: StorePaths, range: string, graph: CommitGraphInfo[
     if (info.parents.length > 1) {
       return { commit: info.commit, parents: info.parents, status: "skipped", reason: "merge" };
     }
-    const commitInfo = toCommitInfo(info);
+    const cached = cachedCommitState(paths, toCommitInfo(info));
     return {
       commit: info.commit,
       parents: info.parents,
-      status: hasCachedCommit(paths, commitInfo) ? "digested" : "undigested"
+      status: cached.status,
+      ...(cached.reason === undefined ? {} : { reason: cached.reason })
     };
   });
   const summary = commits.reduce<CommitStoreSummary>(
@@ -146,7 +172,7 @@ function viewFromGraph(paths: StorePaths, range: string, graph: CommitGraphInfo[
       acc[commit.status] += 1;
       return acc;
     },
-    { tracked: 0, digested: 0, undigested: 0, skipped: 0 }
+    { tracked: 0, digested: 0, undigested: 0, invalid: 0, skipped: 0 }
   );
 
   return {
@@ -166,25 +192,44 @@ function toCommitInfo(info: CommitGraphInfo): CommitInfo {
   };
 }
 
-function hasCachedCommit(paths: StorePaths, info: CommitInfo): boolean {
-  return readCachedDigest(paths, info) !== null;
+function cachedCommitState(
+  paths: StorePaths,
+  info: CommitInfo
+): { status: "digested" | "undigested" | "invalid"; reason?: CommitStoreReason } {
+  const path = objectPath(paths.digests, info.commit);
+  if (!existsSync(path)) {
+    return { status: "undigested" };
+  }
+  const parsed = readJson(path);
+  if (!parsed.ok) {
+    return { status: "invalid", reason: "malformed_digest" };
+  }
+  if (!cachedDigestMatches(info, parsed.value)) {
+    return { status: "invalid", reason: "incompatible_digest" };
+  }
+  return { status: "digested" };
 }
 
 function readCachedDigest(paths: StorePaths, info: CommitInfo): BlockCommitDigest | null {
-  const commit = info.commit;
-  const path = objectPath(paths.digests, commit);
+  const path = objectPath(paths.digests, info.commit);
   if (!existsSync(path)) {
     return null;
   }
-  const digest = JSON.parse(readFileSync(path, "utf8")) as BlockCommitDigest;
-  return cachedDigestMatches(info, digest) ? digest : null;
+  const parsed = readJson(path);
+  return parsed.ok && cachedDigestMatches(info, parsed.value)
+    ? parsed.value as BlockCommitDigest
+    : null;
 }
 
-function cachedDigestMatches(info: CommitInfo, digest: BlockCommitDigest): boolean {
-  return digest.schema_version === schemaVersion &&
-    digest.commit === info.commit &&
-    digest.parent === info.parent &&
-    JSON.stringify(digest.algorithm) === JSON.stringify(digestAlgorithm);
+function cachedDigestMatches(info: CommitInfo, digest: unknown): digest is BlockCommitDigest {
+  if (typeof digest !== "object" || digest === null) {
+    return false;
+  }
+  const candidate = digest as Partial<BlockCommitDigest>;
+  return candidate.schema_version === schemaVersion &&
+    candidate.commit === info.commit &&
+    candidate.parent === info.parent &&
+    JSON.stringify(candidate.algorithm) === JSON.stringify(digestAlgorithm);
 }
 
 function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: BlockCommitDigest): void {
@@ -196,7 +241,8 @@ function storePaths(repoCacheCwd: string): StorePaths {
   const paths = {
     root,
     index: resolve(root, "index.json"),
-    digests: resolve(root, "digests")
+    digests: resolve(root, "digests"),
+    lock: resolve(root, "index.lock")
   };
   mkdirSync(paths.digests, { recursive: true });
   return paths;
@@ -210,11 +256,11 @@ function loadIndex(paths: StorePaths): StoredIndex {
   if (!existsSync(paths.index)) {
     return { schema_version: commitStoreSchemaVersion, commits: {} };
   }
-  const parsed = JSON.parse(readFileSync(paths.index, "utf8")) as StoredIndex;
-  if (parsed.schema_version !== commitStoreSchemaVersion) {
+  const result = readJson(paths.index);
+  if (!result.ok || !isStoredIndex(result.value)) {
     return { schema_version: commitStoreSchemaVersion, commits: {} };
   }
-  return parsed;
+  return result.value;
 }
 
 function saveIndex(paths: StorePaths, index: StoredIndex): void {
@@ -225,4 +271,103 @@ function writeJson(path: string, value: unknown): void {
   const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value)}\n`);
   renameSync(tmp, path);
+}
+
+function readJson(path: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  try {
+    return { ok: true, value: JSON.parse(readFileSync(path, "utf8")) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function isStoredIndex(value: unknown): value is StoredIndex {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Partial<StoredIndex>;
+  if (candidate.schema_version !== commitStoreSchemaVersion || typeof candidate.commits !== "object" || candidate.commits === null) {
+    return false;
+  }
+  return Object.entries(candidate.commits).every(([key, entry]) =>
+    typeof entry === "object" &&
+    entry !== null &&
+    (entry as StoredCommit).commit === key &&
+    Array.isArray((entry as StoredCommit).parents) &&
+    (entry as StoredCommit).parents.every((parent) => typeof parent === "string")
+  );
+}
+
+function withIndexLock<T>(paths: StorePaths, operation: () => T): T {
+  const descriptor = acquireIndexLock(paths.lock);
+  try {
+    return operation();
+  } finally {
+    try {
+      closeSync(descriptor);
+    } finally {
+      try {
+        unlinkSync(paths.lock);
+      } catch (error) {
+        if (!isErrorCode(error, "ENOENT")) {
+          throw error;
+        }
+      }
+    }
+  }
+}
+
+function acquireIndexLock(path: string): number {
+  const waiter = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    try {
+      const descriptor = openSync(path, "wx");
+      try {
+        writeFileSync(descriptor, `${process.pid}\n`);
+        return descriptor;
+      } catch (error) {
+        closeSync(descriptor);
+        unlinkSync(path);
+        throw error;
+      }
+    } catch (error) {
+      if (!isErrorCode(error, "EEXIST")) {
+        throw error;
+      }
+      if (removeStaleLock(path)) {
+        continue;
+      }
+      Atomics.wait(waiter, 0, 0, 10);
+    }
+  }
+  throw new Error(`timed out waiting for cache index lock ${path}`);
+}
+
+function removeStaleLock(path: string): boolean {
+  try {
+    const owner = Number(readFileSync(path, "utf8").trim());
+    if (Number.isInteger(owner) && owner > 0 && processExists(owner)) {
+      return false;
+    }
+    if ((!Number.isInteger(owner) || owner <= 0) && Date.now() - statSync(path).mtimeMs < 30_000) {
+      return false;
+    }
+    unlinkSync(path);
+    return true;
+  } catch (error) {
+    return isErrorCode(error, "ENOENT");
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isErrorCode(error, "ESRCH");
+  }
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
 }

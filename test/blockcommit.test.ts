@@ -1094,7 +1094,7 @@ describe("cli", () => {
     const tracked = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(tracked.status).toBe(0);
     expect(JSON.parse(tracked.stdout)).toMatchObject({
-      schema_version: "blockcommit.commit-store.v1",
+      schema_version: "blockcommit.commit-store.v2",
       summary: { tracked: 1, digested: 0, undigested: 1, skipped: 0 },
       commits: [{ commit: second, status: "undigested" }]
     });
@@ -1116,7 +1116,7 @@ describe("cli", () => {
 
     const text = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo]);
     expect(text.status).toBe(0);
-    expect(text.stdout).toContain("tracked 1 commits (digested 1, undigested 0, skipped 0)");
+    expect(text.stdout).toContain("tracked 1 commits (digested 1, undigested 0, invalid 0, skipped 0)");
     expect(text.stdout).toContain(`D ${second.slice(0, 12)} ${first.slice(0, 12)}`);
   });
 
@@ -1140,13 +1140,89 @@ describe("cli", () => {
     const status = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(status.status).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({
-      summary: { tracked: 1, digested: 0, undigested: 1, skipped: 0 }
+      summary: { tracked: 1, digested: 0, undigested: 0, invalid: 1, skipped: 0 },
+      commits: [{ commit: second, status: "invalid", reason: "incompatible_digest" }]
     });
 
     const repaired = cli(["digest", second, "--cwd", repo]);
     expect(repaired.status).toBe(0);
     expect(JSON.parse(repaired.stdout)).toMatchObject({ commit: second, parent: first });
     expect(JSON.parse(readFileSync(digestPath, "utf8"))).toMatchObject({ commit: second, parent: first });
+  });
+
+  test("reports malformed store files and repairs them on the next digest", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "file.txt"), "one\n");
+    const first = commitAll(repo, "one");
+    writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
+    const second = commitAll(repo, "two");
+    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+
+    expect(cli(["digest", second, "--cwd", repo]).status).toBe(0);
+    writeFileSync(join(root, "index.json"), JSON.stringify({
+      schema_version: "blockcommit.commit-store.v1",
+      commits: {}
+    }));
+
+    const upgradedIndex = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(upgradedIndex.status).toBe(0);
+    expect(JSON.parse(upgradedIndex.stdout).schema_version).toBe("blockcommit.commit-store.v2");
+
+    writeFileSync(join(root, "index.json"), "{\n");
+    writeFileSync(join(root, "index.lock"), "999999999\n");
+
+    const rebuiltIndex = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(rebuiltIndex.status).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, "index.json"), "utf8"))).toMatchObject({
+      schema_version: "blockcommit.commit-store.v2",
+      commits: { [second]: { commit: second, parents: [first] } }
+    });
+
+    const digestPath = join(root, "digests", `${second}.json`);
+    writeFileSync(digestPath, "{\n");
+    writeFileSync(`${digestPath}.interrupted.tmp`, "partial");
+
+    const invalid = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(invalid.status).toBe(0);
+    expect(JSON.parse(invalid.stdout)).toMatchObject({
+      summary: { tracked: 1, digested: 0, undigested: 0, invalid: 1, skipped: 0 },
+      commits: [{ commit: second, status: "invalid", reason: "malformed_digest" }]
+    });
+
+    const verification = cli(["cache", "verify", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
+    expect(verification.status).toBe(1);
+    expect(JSON.parse(verification.stdout)).toMatchObject({
+      summary: { checked: 1, ok: 0, failed: 1, missing: 0, skipped: 0 },
+      results: [{ commit: second, ok: false }]
+    });
+
+    const repaired = cli(["digest", second, "--cwd", repo]);
+    expect(repaired.status).toBe(0);
+    expect(JSON.parse(readFileSync(digestPath, "utf8"))).toMatchObject({ commit: second, parent: first });
+  });
+
+  test("preserves every index update from concurrent digest writers", async () => {
+    const repo = makeRepo();
+    const commits: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      writeFileSync(join(repo, "file.txt"), `${index}\n`);
+      commits.push(commitAll(repo, `commit ${index}`));
+    }
+
+    const executable = join(import.meta.dir, "..", "src", "cli.ts");
+    const processes = commits.map((commit) => Bun.spawn(
+      ["bun", executable, "digest", commit, "--cwd", repo],
+      { stdout: "ignore", stderr: "pipe" }
+    ));
+    const statuses = await Promise.all(processes.map((process) => process.exited));
+    expect(statuses).toEqual(commits.map(() => 0));
+
+    const index = JSON.parse(readFileSync(
+      join(repo, ".git", ".bgit_cache", "blockcommit", "index.json"),
+      "utf8"
+    ));
+    expect(index.schema_version).toBe("blockcommit.commit-store.v2");
+    expect(Object.keys(index.commits).sort()).toEqual([...commits].sort());
   });
 
   test("reports bad commits and unknown options", () => {

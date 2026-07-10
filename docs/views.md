@@ -72,4 +72,6 @@ blockcommit cache verify --range <base>..<tip>
 blockcommit cache --format json
 ```
 
-Digest-producing commands fill the store by default. `cache` refreshes the tracked commit graph and reports `digested`, `undigested`, and `skipped` states. `cache verify` checks existing cached digest records against their referenced commits. Run `digest --range <base>..<tip> --format jsonl` to compute and stream digests for a range. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.
+Digest-producing commands fill the store by default. `cache` refreshes the tracked commit graph and reports `digested`, `undigested`, `invalid`, and `skipped` states. Invalid records carry either `malformed_digest` or `incompatible_digest`; the next digest operation recomputes them. `cache verify` checks existing cached digest records against their referenced commits and reports malformed records as failures rather than aborting the range. Run `digest --range <base>..<tip> --format jsonl` to compute and stream digests for a range. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.
+
+The cache status JSON uses `blockcommit.commit-store.v2`. Store files are written through atomic renames, index updates are serialized across processes, malformed indexes are rebuilt from the selected Git history, and leftover temporary files from interrupted writes are ignored.

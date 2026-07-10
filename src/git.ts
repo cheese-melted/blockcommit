@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -150,7 +150,13 @@ function isPointedGitDir(path: string): boolean {
 function ensureBgitCache(gitDir: string): string {
   const cache = resolve(gitDir, ".bgit_cache");
   mkdirSync(cache, { recursive: true });
-  writeFileSync(resolve(cache, ".git"), `gitdir: ${gitDir}\n`);
+  const pointer = resolve(cache, ".git");
+  const contents = `gitdir: ${gitDir}\n`;
+  if (!existsSync(pointer) || readFileSync(pointer, "utf8") !== contents) {
+    const temporary = `${pointer}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+    writeFileSync(temporary, contents);
+    renameSync(temporary, pointer);
+  }
   return cache;
 }
 

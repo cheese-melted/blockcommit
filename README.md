@@ -48,7 +48,7 @@ blockcommit cache verify --range <base>..<tip>
 blockcommit cache --format json
 ```
 
-`cache [--range <rev-range>]` refreshes and prints cache state: which commits are digested, undigested, or skipped. `cache verify [--range <rev-range>]` verifies cached digest records against their referenced commits. Run `digest --range <rev-range> --format jsonl` to compute and cache missing digest records.
+`cache [--range <rev-range>]` refreshes and prints cache state: which commits are digested, undigested, invalid, or skipped. `cache verify [--range <rev-range>]` verifies cached digest records against their referenced commits. Run `digest --range <rev-range> --format jsonl` to compute missing records and replace invalid ones.
 
 ## Views
 
@@ -110,10 +110,13 @@ blockcommit digest --range <base>..<tip> --format jsonl
 `cache` refreshes the graph and reports state without digesting. `cache verify` checks existing cached digest records against their referenced commits. The default digest/view commands read and write per-commit cache records as they run; `digest --range` is the explicit way to compute and stream digests for a range.
 
 ```text
-tracked 2 commits (digested 1, undigested 1, skipped 0)
+tracked 3 commits (digested 1, undigested 1, invalid 1, skipped 0)
 D 111111111111 root
 U 222222222222 111111111111
+I 333333333333 222222222222 malformed_digest
 ```
+
+Malformed digest JSON and records produced for an incompatible commit, schema, or algorithm are reported as `invalid`. The next digest operation for that commit recomputes and atomically replaces the record. Index updates are serialized across processes, malformed indexes are rebuilt from Git history, and interrupted temporary files are ignored.
 
 Merge commits are tracked as skipped because the current digest format is single-parent. Use `--no-cache` on digest-producing commands when you want one-off output without touching the persistent store.
 

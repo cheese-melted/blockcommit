@@ -4,6 +4,8 @@
 
 CI installs dependencies, runs the test suite, builds the package, smoke-tests the packed npm tarball, and runs the built Node CLI against a synthetic Git repo.
 
+The test suite also exercises malformed cache recovery and concurrent digest writers. Store changes should preserve the rule that `cache` remains readable after a damaged record and that a later digest operation can repair it.
+
 Run the same high-signal checks locally with:
 
 ```sh

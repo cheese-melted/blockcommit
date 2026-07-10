@@ -6,6 +6,7 @@ export {
   commitStoreView,
   renderCommitStoreView,
   type CommitStoreCommit,
+  type CommitStoreReason,
   type CommitStoreStatus,
   type CommitStoreSummary,
   type CommitStoreView

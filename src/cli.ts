@@ -135,7 +135,9 @@ function runCacheVerify(options: CliOptions): number {
       missing += 1;
       continue;
     }
-    const result = verifyCachedDigest(cwd, info, record);
+    const result = record.ok
+      ? verifyCachedDigest(cwd, info, record)
+      : invalidCachedDigest(info, record.error);
     results.push(result);
     if (options.format === "json") {
       continue;
@@ -177,6 +179,14 @@ function runCacheVerify(options: CliOptions): number {
       `(${summary.missing} missing, ${summary.skipped} skipped)\n`
   );
   return failed === 0 ? 0 : 1;
+}
+
+function invalidCachedDigest(info: CommitInfo, reason: string): VerifyResult {
+  return {
+    commit: info.commit,
+    ok: false,
+    files: [{ path: "<cache>", ok: false, reason }]
+  };
 }
 
 function verifyCachedDigest(
@@ -387,8 +397,8 @@ Usage:
 Commands:
   digest    emit the canonical JSON line-move digest for a commit
   view      emit readable content/identity views
-  cache     refresh and print cache state: digested, undigested, and
-            skipped commits. Use cache verify to check cached digest
+  cache     refresh and print cache state: digested, undigested, invalid,
+            and skipped commits. Use cache verify to check cached digest
             records against their referenced commits.
 
 Options:
