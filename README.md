@@ -1,33 +1,35 @@
-# blockcommit
+# git-trails
 
-`blockcommit` converts a git commit into a deterministic set of line moves. It pairs exact lines across the whole commit so moved code can keep its identity.
+`git-trails` traces exact line movement through Git commits. It pairs lines across the whole commit so moved code can keep its identity.
 
 ## Install
 
 Install globally from npm:
 
 ```sh
-npm install -g blockcommit
+npm install -g git-trails
 ```
+
+The package installs a Git subcommand, so you can invoke it as `git trails`.
 
 Or run without a global install:
 
 ```sh
-npx blockcommit view
+npx git-trails view
 ```
 
 ## Usage
 
 All commands default to the current working repo. Use `--cwd <path>` only when reading another worktree or a `.git` directory directly.
 
-By default, commands that compute commit digests read from and write to `.git/.bgit_cache/blockcommit`. Add `--no-cache` to bypass the persistent store for a single run.
+By default, commands that compute commit digests read from and write to `.git/.bgit_cache/git-trails`. Add `--no-cache` to bypass the persistent store for a single run.
 
 ### Digest
 
 ```sh
-blockcommit digest
-blockcommit digest <commit>
-blockcommit digest --no-cache
+git trails digest
+git trails digest <commit>
+git trails digest --no-cache
 ```
 
 `digest [commit] [--no-cache]` prints canonical JSON for one commit. The commit defaults to `HEAD`.
@@ -35,17 +37,17 @@ blockcommit digest --no-cache
 For bulk export, pass a Git revision range and print one JSON object per line:
 
 ```sh
-blockcommit digest --range <base>..<tip> --format jsonl
+git trails digest --range <base>..<tip> --format jsonl
 ```
 
 ### Cache
 
 ```sh
-blockcommit cache
-blockcommit cache --range <base>..<tip>
-blockcommit cache verify
-blockcommit cache verify --range <base>..<tip>
-blockcommit cache --format json
+git trails cache
+git trails cache --range <base>..<tip>
+git trails cache verify
+git trails cache verify --range <base>..<tip>
+git trails cache --format json
 ```
 
 `cache [--range <rev-range>]` refreshes and prints cache state: which commits are digested, undigested, invalid, or skipped. `cache verify [--range <rev-range>]` verifies cached digest records against their referenced commits. Run `digest --range <rev-range> --format jsonl` to compute missing records and replace invalid ones.
@@ -59,7 +61,7 @@ Views are readable projections of the canonical digest. They do not replace the 
 `view [commit]` prints ordered moves, insertions, and deletions. This is the default view.
 
 ```sh
-blockcommit view
+git trails view
 ```
 
 ```text
@@ -75,9 +77,9 @@ Source coordinates refer to the parent tree; destination coordinates refer to th
 Identity views summarize cross-path movement. Same-file moves remain in the content view.
 
 ```sh
-blockcommit view --identity
-blockcommit view --identity-from
-blockcommit view --identity-to
+git trails view --identity
+git trails view --identity-from
+git trails view --identity-to
 ```
 
 ```text
@@ -98,10 +100,10 @@ digests/<commit>.json   canonical digest records
 ```
 
 ```sh
-blockcommit cache
-blockcommit cache --range <base>..<tip>
-blockcommit cache verify --range <base>..<tip>
-blockcommit digest --range <base>..<tip> --format jsonl
+git trails cache
+git trails cache --range <base>..<tip>
+git trails cache verify --range <base>..<tip>
+git trails digest --range <base>..<tip> --format jsonl
 ```
 
 `cache` reports state without computing missing digests. `digest --range` computes and streams a range, filling the store as it goes. `cache verify` checks records already present in the store.
@@ -122,11 +124,11 @@ The default range is every commit reachable from `HEAD`. Use a bounded Git revis
 
 ## Library and Schema
 
-The canonical format is `blockcommit.digest.v4`. Its JSON Schema ships at `blockcommit/schema/blockcommit.digest.v4.schema.json`, and runtime validation is available from the package:
+The canonical format is `git-trails.digest.v4`. Its JSON Schema ships at `git-trails/schema/git-trails.digest.v4.schema.json`, and runtime validation is available from the package:
 
 
 ```ts
-import { digestCommit, validateDigest } from "blockcommit";
+import { digestCommit, validateDigest } from "git-trails";
 
 const digest = digestCommit({ commit: "HEAD" });
 const result = validateDigest(digest);

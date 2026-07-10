@@ -21,7 +21,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 function makeRepo(): string {
-  const repo = mkdtempSync(join(tmpdir(), "blockcommit-"));
+  const repo = mkdtempSync(join(tmpdir(), "git-trails-"));
   git(repo, ["init"]);
   git(repo, ["config", "user.email", "test@example.com"]);
   git(repo, ["config", "user.name", "Test User"]);
@@ -212,7 +212,7 @@ describe("digestCommit", () => {
     const commit = commitAll(repo, "move one line");
 
     const digest = digestCommit({ cwd: repo, commit });
-    expect(digest.schema_version).toBe("blockcommit.digest.v4");
+    expect(digest.schema_version).toBe("git-trails.digest.v4");
     expect(JSON.parse(JSON.stringify(digest))).not.toHaveProperty("repo");
     expect(digest.algorithm).toEqual({
       name: "exact-line-sha256-identity-preserving",
@@ -242,7 +242,7 @@ describe("digestCommit", () => {
     expect(move?.dst?.start_line).toBe(2);
     expect(move?.dst?.symbol).toBe(1);
     expect(move?.dst?.total_lines).toBe(3);
-    expect(move?.id).toMatch(/^bc_[0-9a-f]{16}$/);
+    expect(move?.id).toMatch(/^gt_[0-9a-f]{16}$/);
     expect(move?.payload_encoding).toBe("utf-8");
     expect(move?.payload_text).toBe("move\n");
     expect(move?.payload_base64).toBeUndefined();
@@ -255,7 +255,7 @@ describe("digestCommit", () => {
     writeFileSync(join(repo, "file.txt"), "base\nnext\n");
     const commit = commitAll(repo, "add line");
 
-    const clone = mkdtempSync(join(tmpdir(), "blockcommit-clone-"));
+    const clone = mkdtempSync(join(tmpdir(), "git-trails-clone-"));
     git(tmpdir(), ["clone", repo, clone]);
 
     expect(JSON.stringify(digestCommit({ cwd: repo, commit }))).toBe(
@@ -264,7 +264,7 @@ describe("digestCommit", () => {
   });
 
   test("rejects SHA-256-format Git repositories", () => {
-    const repo = mkdtempSync(join(tmpdir(), "blockcommit-sha256-"));
+    const repo = mkdtempSync(join(tmpdir(), "git-trails-sha256-"));
     const init = spawnSync("git", ["init", "--object-format=sha256"], { cwd: repo, encoding: "utf8" });
     if (init.status !== 0) {
       return;
@@ -594,7 +594,7 @@ describe("digestCommit", () => {
 
     const digest = digestCommit({ cwd: repo, commit });
     expect(digest.summary.moves).toBeGreaterThan(0);
-    expect(digest.blocks.every((block) => block.id.startsWith("bc_"))).toBe(true);
+    expect(digest.blocks.every((block) => block.id.startsWith("gt_"))).toBe(true);
     expect(verifyCommit({ cwd: repo, commit }).ok).toBe(true);
   });
 
@@ -890,7 +890,7 @@ describe("verifyCommit", () => {
       expect(verifyResult.files.filter((file) => !file.ok)).toEqual([]);
       expect(validate(digest)).toBe(true);
 
-      const clone = mkdtempSync(join(tmpdir(), "blockcommit-fuzz-clone-"));
+      const clone = mkdtempSync(join(tmpdir(), "git-trails-fuzz-clone-"));
       git(tmpdir(), ["clone", repo, clone]);
       expect(JSON.stringify(digestCommit({ cwd: clone, commit }))).toBe(JSON.stringify(digest));
     }
@@ -1057,7 +1057,7 @@ describe("cli", () => {
     expect(lines).toHaveLength(1);
     const digest = JSON.parse(lines[0]);
     expect(digest.commit).toBe(second);
-    expect(digest.schema_version).toBe("blockcommit.digest.v4");
+    expect(digest.schema_version).toBe("git-trails.digest.v4");
   });
 
   test("builds the cache by default and supports --no-cache", () => {
@@ -1066,7 +1066,7 @@ describe("cli", () => {
     commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const commit = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+    const root = join(repo, ".git", ".bgit_cache", "git-trails");
 
     const uncached = cli(["view", commit, "--cwd", repo, "--no-cache"]);
     expect(uncached.status).toBe(0);
@@ -1094,12 +1094,12 @@ describe("cli", () => {
     const tracked = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(tracked.status).toBe(0);
     expect(JSON.parse(tracked.stdout)).toMatchObject({
-      schema_version: "blockcommit.commit-store.v2",
+      schema_version: "git-trails.commit-store.v2",
       summary: { tracked: 1, digested: 0, undigested: 1, skipped: 0 },
       commits: [{ commit: second, status: "undigested" }]
     });
 
-    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+    const root = join(repo, ".git", ".bgit_cache", "git-trails");
     expect(existsSync(join(root, "index.json"))).toBe(true);
 
     const warmed = cli(["digest", "--range", `${first}..${second}`, "--cwd", repo, "--format", "jsonl"]);
@@ -1126,7 +1126,7 @@ describe("cli", () => {
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+    const root = join(repo, ".git", ".bgit_cache", "git-trails");
 
     const cached = cli(["digest", second, "--cwd", repo]);
     expect(cached.status).toBe(0);
@@ -1156,17 +1156,17 @@ describe("cli", () => {
     const first = commitAll(repo, "one");
     writeFileSync(join(repo, "file.txt"), "one\ntwo\n");
     const second = commitAll(repo, "two");
-    const root = join(repo, ".git", ".bgit_cache", "blockcommit");
+    const root = join(repo, ".git", ".bgit_cache", "git-trails");
 
     expect(cli(["digest", second, "--cwd", repo]).status).toBe(0);
     writeFileSync(join(root, "index.json"), JSON.stringify({
-      schema_version: "blockcommit.commit-store.v1",
+      schema_version: "git-trails.commit-store.v1",
       commits: {}
     }));
 
     const upgradedIndex = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(upgradedIndex.status).toBe(0);
-    expect(JSON.parse(upgradedIndex.stdout).schema_version).toBe("blockcommit.commit-store.v2");
+    expect(JSON.parse(upgradedIndex.stdout).schema_version).toBe("git-trails.commit-store.v2");
 
     writeFileSync(join(root, "index.json"), "{\n");
     writeFileSync(join(root, "index.lock"), "999999999\n");
@@ -1174,7 +1174,7 @@ describe("cli", () => {
     const rebuiltIndex = cli(["cache", "--range", `${first}..${second}`, "--cwd", repo, "--format", "json"]);
     expect(rebuiltIndex.status).toBe(0);
     expect(JSON.parse(readFileSync(join(root, "index.json"), "utf8"))).toMatchObject({
-      schema_version: "blockcommit.commit-store.v2",
+      schema_version: "git-trails.commit-store.v2",
       commits: { [second]: { commit: second, parents: [first] } }
     });
 
@@ -1218,10 +1218,10 @@ describe("cli", () => {
     expect(statuses).toEqual(commits.map(() => 0));
 
     const index = JSON.parse(readFileSync(
-      join(repo, ".git", ".bgit_cache", "blockcommit", "index.json"),
+      join(repo, ".git", ".bgit_cache", "git-trails", "index.json"),
       "utf8"
     ));
-    expect(index.schema_version).toBe("blockcommit.commit-store.v2");
+    expect(index.schema_version).toBe("git-trails.commit-store.v2");
     expect(Object.keys(index.commits).sort()).toEqual([...commits].sort());
   });
 
@@ -1301,7 +1301,7 @@ describe("cli", () => {
     const missing = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo, "--format", "json"]);
     expect(missing.status).toBe(0);
     expect(JSON.parse(missing.stdout)).toMatchObject({
-      schema_version: "blockcommit.cache-verify.v1",
+      schema_version: "git-trails.cache-verify.v1",
       summary: { checked: 0, ok: 0, failed: 0, missing: 1, skipped: 0 },
       results: []
     });
@@ -1317,12 +1317,12 @@ describe("cli", () => {
     const okJson = cli(["cache", "verify", "--range", `${first}..${commit}`, "--cwd", repo, "--format", "json"]);
     expect(okJson.status).toBe(0);
     expect(JSON.parse(okJson.stdout)).toMatchObject({
-      schema_version: "blockcommit.cache-verify.v1",
+      schema_version: "git-trails.cache-verify.v1",
       summary: { checked: 1, ok: 1, failed: 0, missing: 0, skipped: 0 },
       results: [{ commit, ok: true }]
     });
 
-    const digestPath = join(repo, ".git", ".bgit_cache", "blockcommit", "digests", `${commit}.json`);
+    const digestPath = join(repo, ".git", ".bgit_cache", "git-trails", "digests", `${commit}.json`);
     const tampered = JSON.parse(readFileSync(digestPath, "utf8"));
     tampered.blocks[0].payload_sha256 = "0".repeat(64);
     writeFileSync(digestPath, JSON.stringify(tampered));
@@ -1353,7 +1353,7 @@ describe("cli", () => {
 describe("digest schema", () => {
   test("generated digests validate against the shipped schema", () => {
     const schema = JSON.parse(
-      readFileSync(join(import.meta.dir, "..", "schema", "blockcommit.digest.v4.schema.json"), "utf8")
+      readFileSync(join(import.meta.dir, "..", "schema", "git-trails.digest.v4.schema.json"), "utf8")
     );
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(schema);

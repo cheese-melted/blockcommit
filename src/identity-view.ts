@@ -1,4 +1,4 @@
-import { type BlockCommitDigest } from "./types";
+import { type GitTrailsDigest } from "./types";
 
 export interface IdentityRenderOptions {
   pretty?: boolean;
@@ -7,20 +7,20 @@ export interface IdentityRenderOptions {
 
 // Pairwise file-identity flow view over the digest. Each line aggregates
 // cross-path move blocks as source old total -> destination new total (moved).
-export function renderIdentity(digest: BlockCommitDigest): string {
+export function renderIdentity(digest: GitTrailsDigest): string {
   const lines = identityFlows(digest).map(
     (flow) => `${quotePath(flow.srcPath)}:${flow.srcLines} -> ${quotePath(flow.dstPath)}:${flow.dstLines} (${flow.movedLines})`
   );
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-export function renderIdentityFrom(digest: BlockCommitDigest, options: IdentityRenderOptions = {}): string {
+export function renderIdentityFrom(digest: GitTrailsDigest, options: IdentityRenderOptions = {}): string {
   const flows = identityFlows(digest);
   const lines = options.pretty === true ? renderPrettySources(flows, options) : renderIdentitySources(flows);
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-export function renderIdentityTo(digest: BlockCommitDigest, options: IdentityRenderOptions = {}): string {
+export function renderIdentityTo(digest: GitTrailsDigest, options: IdentityRenderOptions = {}): string {
   const flows = identityFlows(digest);
   const lines = options.pretty === true ? renderPrettyDestinations(flows, options) : renderIdentityDestinations(flows);
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
@@ -34,7 +34,7 @@ export interface IdentityFlow {
   movedLines: number;
 }
 
-export function identityFlows(digest: BlockCommitDigest): IdentityFlow[] {
+export function identityFlows(digest: GitTrailsDigest): IdentityFlow[] {
   const filesByPath = new Map(digest.files.map((file) => [file.path, file]));
   const flows = new Map<string, IdentityFlow>();
 

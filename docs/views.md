@@ -7,7 +7,7 @@ The readable views are derived from the canonical digest. They do not replace th
 `view --view content` renders the content layer as compact movement tuples. `content` is the default view:
 
 ```sh
-blockcommit view
+git trails view
 ```
 
 ```text
@@ -23,7 +23,7 @@ M a.ts:1+6 -> b.ts:1+6
 `view --identity` renders pairwise file-continuity flow between paths. Same-file moves stay in the content view:
 
 ```sh
-blockcommit view --identity
+git trails view --identity
 ```
 
 ```text
@@ -39,7 +39,7 @@ The text view is derived from cross-path move blocks. It does not label events a
 `view --identity-from` answers where each old file's moved lines ended up:
 
 ```sh
-blockcommit view --identity-from
+git trails view --identity-from
 ```
 
 ```text
@@ -50,7 +50,7 @@ a.ts:10    ->  b.ts    (6/10, 60%)
 `view --identity-to` answers where each new file's moved lines came from:
 
 ```sh
-blockcommit view --identity-to
+git trails view --identity-to
 ```
 
 ```text
@@ -67,11 +67,11 @@ The canonical JSON still includes derived identity events for exact or majority 
 `cache` is the query-only view over cached Git history:
 
 ```sh
-blockcommit cache --range <base>..<tip>
-blockcommit cache verify --range <base>..<tip>
-blockcommit cache --format json
+git trails cache --range <base>..<tip>
+git trails cache verify --range <base>..<tip>
+git trails cache --format json
 ```
 
 Digest-producing commands fill the store by default. `cache` refreshes the tracked commit graph and reports `digested`, `undigested`, `invalid`, and `skipped` states. Invalid records carry either `malformed_digest` or `incompatible_digest`; the next digest operation recomputes them. `cache verify` checks existing cached digest records against their referenced commits and reports malformed records as failures rather than aborting the range. Run `digest --range <base>..<tip> --format jsonl` to compute and stream digests for a range. Add `--no-cache` to digest/view commands to bypass store reads and writes for that run.
 
-The cache status JSON uses `blockcommit.commit-store.v2`. Store files are written through atomic renames, index updates are serialized across processes, malformed indexes are rebuilt from the selected Git history, and leftover temporary files from interrupted writes are ignored.
+The cache status JSON uses `git-trails.commit-store.v2`. Store files are written through atomic renames, index updates are serialized across processes, malformed indexes are rebuilt from the selected Git history, and leftover temporary files from interrupted writes are ignored.

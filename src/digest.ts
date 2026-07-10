@@ -13,7 +13,7 @@ import {
   digestAlgorithm,
   schemaVersion,
   type BlockKind,
-  type BlockCommitDigest,
+  type GitTrailsDigest,
   type ChangedFileDigest,
   type LineDigestStatus,
   type LineMoveBlock,
@@ -74,11 +74,11 @@ export interface FileState {
 }
 
 export interface DigestComputation {
-  digest: BlockCommitDigest;
+  digest: GitTrailsDigest;
   fileStates: Map<string, FileState>;
 }
 
-export function digestCommit(options: DigestOptions = {}): BlockCommitDigest {
+export function digestCommit(options: DigestOptions = {}): GitTrailsDigest {
   return computeDigest(options).digest;
 }
 
@@ -153,7 +153,7 @@ export function computeDigestFor(info: CommitInfo): DigestComputation {
   const symbolBuilder = new DigestSymbolBuilder(fileDigests, draftIdentity);
   const blocks = draftBlocks.map((block) => decorateBlock(block, symbolBuilder));
 
-  const digest: BlockCommitDigest = {
+  const digest: GitTrailsDigest = {
     schema_version: schemaVersion,
     algorithm: digestAlgorithm,
     commit: info.commit,
@@ -964,7 +964,7 @@ function stableBlockId(kind: BlockKind, src: DraftLineSpan | null, dst: DraftLin
     .update("\0")
     .update(payloadSha)
     .digest("hex");
-  return `bc_${hash.slice(0, 16)}`;
+  return `gt_${hash.slice(0, 16)}`;
 }
 
 function compareLineRecords(left: LineRecord, right: LineRecord): number {

@@ -1,10 +1,10 @@
-import { nullPath, type BlockCommitDigest, type LineMoveBlock, type LineSpan } from "./types";
+import { nullPath, type GitTrailsDigest, type LineMoveBlock, type LineSpan } from "./types";
 
 // Compact content view over the digest: one line per block. src coordinates
 // are parent-image, dst coordinates are post-image, and path:start+count means
 // start at that line and include count lines. A display format; the JSON
 // digest stays canonical.
-export function renderContent(digest: BlockCommitDigest): string {
+export function renderContent(digest: GitTrailsDigest): string {
   const lines = digest.blocks.map((block) => renderBlockOp(block));
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }

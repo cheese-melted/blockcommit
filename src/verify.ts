@@ -4,7 +4,7 @@ import { type CommitInfo } from "./git";
 import { countLineBytes, type LineRecord } from "./lines";
 import { validateDigest } from "./validate";
 import {
-  type BlockCommitDigest,
+  type GitTrailsDigest,
   type ChangedFileDigest,
   type FileVerification,
   type LineMoveBlock,
@@ -69,7 +69,7 @@ export function verifyDigest(options: VerifyDigestOptions): VerifyResult {
     };
   }
 
-  const supplied = options.digest as BlockCommitDigest;
+  const supplied = options.digest as GitTrailsDigest;
   const checks: FileVerification[] = [];
 
   for (const block of supplied.blocks ?? []) {
@@ -141,7 +141,7 @@ function verifyPayloadMetadata(block: LineMoveBlock): FileVerification {
   }
 }
 
-function compareDigestFacts(supplied: BlockCommitDigest, recomputed: BlockCommitDigest): FileVerification[] {
+function compareDigestFacts(supplied: GitTrailsDigest, recomputed: GitTrailsDigest): FileVerification[] {
   const checks: FileVerification[] = [];
   checks.push(compareValue("<digest>", "commit", supplied.commit, recomputed.commit));
   checks.push(compareValue("<digest>", "parent", supplied.parent, recomputed.parent));

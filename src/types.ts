@@ -1,5 +1,5 @@
 export const nullPath = "/dev/null";
-export const schemaVersion = "blockcommit.digest.v4";
+export const schemaVersion = "git-trails.digest.v4";
 export const digestAlgorithm = {
   name: "exact-line-sha256-identity-preserving",
   version: 2,
@@ -100,7 +100,7 @@ export interface IdentityEvent {
   confidence: IdentityConfidence;
 }
 
-export interface BlockCommitSummary {
+export interface GitTrailsSummary {
   files: number;
   blocks: number;
   moves: number;
@@ -108,7 +108,7 @@ export interface BlockCommitSummary {
   deletions: number;
 }
 
-export interface BlockCommitDigest {
+export interface GitTrailsDigest {
   schema_version: typeof schemaVersion;
   algorithm: DigestAlgorithm;
   commit: string;
@@ -117,7 +117,7 @@ export interface BlockCommitDigest {
   files: ChangedFileDigest[];
   blocks: LineMoveBlock[];
   identity: IdentityEvent[];
-  summary: BlockCommitSummary;
+  summary: GitTrailsSummary;
 }
 
 export interface FileVerification {

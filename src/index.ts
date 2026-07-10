@@ -27,8 +27,8 @@ export {
 export { verifyCommit, verifyDigest, type VerifyDigestOptions } from "./verify";
 export { digestAlgorithm, schemaVersion } from "./types";
 export type {
-  BlockCommitDigest,
-  BlockCommitSummary,
+  GitTrailsDigest,
+  GitTrailsSummary,
   BlockKind,
   ChangedFileDigest,
   FileVerification,

@@ -12,9 +12,9 @@ import {
 import { resolve } from "node:path";
 import { computeDigestFor } from "./digest";
 import { listCommitGraphInfos, resolveRepoCacheCwd, type CommitGraphInfo, type CommitInfo } from "./git";
-import { digestAlgorithm, schemaVersion, type BlockCommitDigest } from "./types";
+import { digestAlgorithm, schemaVersion, type GitTrailsDigest } from "./types";
 
-export const commitStoreSchemaVersion = "blockcommit.commit-store.v2";
+export const commitStoreSchemaVersion = "git-trails.commit-store.v2";
 
 export type CommitStoreStatus = "digested" | "undigested" | "invalid" | "skipped";
 export type CommitStoreReason = "merge" | "malformed_digest" | "incompatible_digest";
@@ -87,7 +87,7 @@ export function commitStoreView(cwd: string, range = defaultRange): CommitStoreV
   return viewFromGraph(paths, range, graph);
 }
 
-export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
+export function cachedDigestForInfo(info: CommitInfo): GitTrailsDigest {
   const paths = storePaths(info.repo);
   withIndexLock(paths, () => {
     const index = loadIndex(paths);
@@ -108,7 +108,7 @@ export function cachedDigestForInfo(info: CommitInfo): BlockCommitDigest {
   return digest;
 }
 
-export function writeDigestToCache(info: CommitInfo, digest: BlockCommitDigest): void {
+export function writeDigestToCache(info: CommitInfo, digest: GitTrailsDigest): void {
   writeCachedDigest(storePaths(info.repo), info, digest);
 }
 
@@ -210,34 +210,34 @@ function cachedCommitState(
   return { status: "digested" };
 }
 
-function readCachedDigest(paths: StorePaths, info: CommitInfo): BlockCommitDigest | null {
+function readCachedDigest(paths: StorePaths, info: CommitInfo): GitTrailsDigest | null {
   const path = objectPath(paths.digests, info.commit);
   if (!existsSync(path)) {
     return null;
   }
   const parsed = readJson(path);
   return parsed.ok && cachedDigestMatches(info, parsed.value)
-    ? parsed.value as BlockCommitDigest
+    ? parsed.value as GitTrailsDigest
     : null;
 }
 
-function cachedDigestMatches(info: CommitInfo, digest: unknown): digest is BlockCommitDigest {
+function cachedDigestMatches(info: CommitInfo, digest: unknown): digest is GitTrailsDigest {
   if (typeof digest !== "object" || digest === null) {
     return false;
   }
-  const candidate = digest as Partial<BlockCommitDigest>;
+  const candidate = digest as Partial<GitTrailsDigest>;
   return candidate.schema_version === schemaVersion &&
     candidate.commit === info.commit &&
     candidate.parent === info.parent &&
     JSON.stringify(candidate.algorithm) === JSON.stringify(digestAlgorithm);
 }
 
-function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: BlockCommitDigest): void {
+function writeCachedDigest(paths: StorePaths, info: CommitInfo, digest: GitTrailsDigest): void {
   writeJson(objectPath(paths.digests, info.commit), digest);
 }
 
 function storePaths(repoCacheCwd: string): StorePaths {
-  const root = resolve(repoCacheCwd, "blockcommit");
+  const root = resolve(repoCacheCwd, "git-trails");
   const paths = {
     root,
     index: resolve(root, "index.json"),

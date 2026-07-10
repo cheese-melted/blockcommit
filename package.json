@@ -1,28 +1,30 @@
 {
-  "name": "blockcommit",
+  "name": "git-trails",
   "version": "0.7.0",
-  "description": "Convert git commits into line-move block digests",
+  "description": "Trace exact line movement through Git commits",
   "type": "module",
   "license": "MIT",
   "author": "Alan Chen",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cheese-melted/blockcommit.git"
+    "url": "git+https://github.com/cheese-melted/git-trails.git"
   },
   "bugs": {
-    "url": "https://github.com/cheese-melted/blockcommit/issues"
+    "url": "https://github.com/cheese-melted/git-trails/issues"
   },
-  "homepage": "https://github.com/cheese-melted/blockcommit#readme",
+  "homepage": "https://github.com/cheese-melted/git-trails#readme",
   "keywords": [
     "git",
     "diff",
     "commit",
     "line-move",
+    "code-tracking",
+    "lineage",
     "refactoring",
     "patch"
   ],
   "bin": {
-    "blockcommit": "dist/cli.js"
+    "git-trails": "dist/cli.js"
   },
   "exports": {
     ".": {

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cheese-melted/blockcommit/schema/blockcommit.digest.v4.schema.json",
-  "title": "blockcommit digest v4",
+  "$id": "https://github.com/cheese-melted/git-trails/schema/git-trails.digest.v4.schema.json",
+  "title": "git-trails digest v4",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "algorithm", "commit", "parent", "symbols", "files", "blocks", "identity", "summary"],
   "properties": {
-    "schema_version": { "const": "blockcommit.digest.v4" },
+    "schema_version": { "const": "git-trails.digest.v4" },
     "algorithm": { "$ref": "#/$defs/algorithm" },
     "commit": { "$ref": "#/$defs/gitOid" },
     "parent": {
@@ -106,7 +106,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^bc_[0-9a-f]{16}$"
+          "pattern": "^gt_[0-9a-f]{16}$"
         },
         "kind": { "enum": ["move", "insert", "delete"] },
         "src": {
@@ -296,7 +296,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^bc_[0-9a-f]{16}$"
+            "pattern": "^gt_[0-9a-f]{16}$"
           }
         }
       }

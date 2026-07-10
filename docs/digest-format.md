@@ -1,16 +1,16 @@
 # Digest Format
 
-`blockcommit digest` emits the canonical machine format. It is the source of truth for storage, verification, and downstream tools.
+`git trails digest` emits the canonical machine format. It is the source of truth for storage, verification, and downstream tools.
 
 ## Canonicality
 
-The digest excludes local checkout paths and other machine-local facts. Cached digests are stored under the selected repository's `.git/.bgit_cache/blockcommit` directory and can be checked against their referenced commits:
+The digest excludes local checkout paths and other machine-local facts. Cached digests are stored under the selected repository's `.git/.bgit_cache/git-trails` directory and can be checked against their referenced commits:
 
 ```sh
-blockcommit cache verify --cwd /path/to/repo
+git trails cache verify --cwd /path/to/repo
 ```
 
-The current schema is `blockcommit.digest.v4`, shipped as `schema/blockcommit.digest.v4.schema.json` and exported as `blockcommit/schema/blockcommit.digest.v4.schema.json`.
+The current schema is `git-trails.digest.v4`, shipped as `schema/git-trails.digest.v4.schema.json` and exported as `git-trails/schema/git-trails.digest.v4.schema.json`.
 
 Digest v4 supports SHA-1-format Git repositories. SHA-256 object-format repositories are rejected before digesting because commit, parent, and blob object IDs are canonicalized as 40-hex Git OIDs.
 
@@ -35,7 +35,7 @@ Coordinate semantics:
 
 ```jsonc
 {
-  "schema_version": "blockcommit.digest.v4",
+  "schema_version": "git-trails.digest.v4",
   "algorithm": {
     "name": "exact-line-sha256-identity-preserving",
     "version": 2,
@@ -66,7 +66,7 @@ Coordinate semantics:
   ],
   "blocks": [
     {
-      "id": "bc_0123456789abcdef",
+      "id": "gt_0123456789abcdef",
       "kind": "move",
       "src": {
         "symbol": 0,

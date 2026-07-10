@@ -51,7 +51,7 @@ export function getCommitInfo(cwd: string, commitish: string): CommitInfo {
   const [, ...parents] = revLine.split(/\s+/);
 
   if (parents.length > 1) {
-    throw new Error(`blockcommit only supports single-parent commits; ${commit} has ${parents.length} parents`);
+    throw new Error(`git-trails only supports single-parent commits; ${commit} has ${parents.length} parents`);
   }
 
   return {
@@ -163,7 +163,7 @@ function ensureBgitCache(gitDir: string): string {
 function assertSha1ObjectFormat(repo: string): void {
   const objectFormat = gitText(repo, ["rev-parse", "--show-object-format"]).trim();
   if (objectFormat !== "sha1") {
-    throw new Error(`blockcommit digest v4 only supports sha1 Git object format, got ${objectFormat}`);
+    throw new Error(`git-trails digest v4 only supports sha1 Git object format, got ${objectFormat}`);
   }
 }
 

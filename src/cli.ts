@@ -5,7 +5,7 @@ import { renderContent } from "./content";
 import { renderIdentity, renderIdentityFrom, renderIdentityTo } from "./identity-view";
 import { cachedDigestForInfo, cachedDigestRecordForInfo, commitStoreView, renderCommitStoreView } from "./store";
 import { verifyDigest } from "./verify";
-import { type BlockCommitDigest, type VerifyResult } from "./types";
+import { type GitTrailsDigest, type VerifyResult } from "./types";
 import { type CommitInfo } from "./git";
 
 type Format = "json" | "jsonl";
@@ -21,7 +21,7 @@ interface CacheVerifySummary {
 }
 
 interface CacheVerifyView {
-  schema_version: "blockcommit.cache-verify.v1";
+  schema_version: "git-trails.cache-verify.v1";
   range: string;
   summary: CacheVerifySummary;
   results: VerifyResult[];
@@ -97,14 +97,14 @@ function writeTextView(value: string, emptyValue: string): void {
   process.stdout.write(value.length === 0 ? emptyValue : value);
 }
 
-function digestForCommit(options: CliOptions): BlockCommitDigest {
+function digestForCommit(options: CliOptions): GitTrailsDigest {
   if (!options.cache) {
     return digestCommit({ cwd: options.cwd, commit: options.commit });
   }
   return cachedDigestForInfo(getCommitInfo(options.cwd ?? process.cwd(), options.commit));
 }
 
-function digestForInfo(info: CommitInfo, options: CliOptions): BlockCommitDigest {
+function digestForInfo(info: CommitInfo, options: CliOptions): GitTrailsDigest {
   return options.cache ? cachedDigestForInfo(info) : computeDigestFor(info).digest;
 }
 
@@ -164,7 +164,7 @@ function runCacheVerify(options: CliOptions): number {
 
   if (options.format === "json") {
     const view: CacheVerifyView = {
-      schema_version: "blockcommit.cache-verify.v1",
+      schema_version: "git-trails.cache-verify.v1",
       range,
       summary,
       results
@@ -379,20 +379,20 @@ function parseView(value: string): ViewType {
 }
 
 function printHelp(): void {
-  process.stdout.write(`blockcommit
+  process.stdout.write(`git-trails
 
 Usage:
-  blockcommit digest [commit] [--no-cache] [--cwd <path>]
-  blockcommit digest --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
-  blockcommit view [commit] [--view content] [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --view identity [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --view identity-from [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --view identity-to [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --identity [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --identity-from [--no-cache] [--cwd <path>]
-  blockcommit view [commit] --identity-to [--no-cache] [--cwd <path>]
-  blockcommit cache [--range <rev-range>] [--format json] [--cwd <path>]
-  blockcommit cache verify [--range <rev-range>] [--format json] [--cwd <path>]
+  git trails digest [commit] [--no-cache] [--cwd <path>]
+  git trails digest --range <rev-range> --format jsonl [--no-cache] [--cwd <path>]
+  git trails view [commit] [--view content] [--no-cache] [--cwd <path>]
+  git trails view [commit] --view identity [--no-cache] [--cwd <path>]
+  git trails view [commit] --view identity-from [--no-cache] [--cwd <path>]
+  git trails view [commit] --view identity-to [--no-cache] [--cwd <path>]
+  git trails view [commit] --identity [--no-cache] [--cwd <path>]
+  git trails view [commit] --identity-from [--no-cache] [--cwd <path>]
+  git trails view [commit] --identity-to [--no-cache] [--cwd <path>]
+  git trails cache [--range <rev-range>] [--format json] [--cwd <path>]
+  git trails cache verify [--range <rev-range>] [--format json] [--cwd <path>]
 
 Commands:
   digest    emit the canonical JSON line-move digest for a commit
@@ -404,12 +404,12 @@ Commands:
 Options:
   --cwd <path>
             override the current working repo. The path may be a worktree
-            or its .git directory; blockcommit normalizes it through an
+            or its .git directory; git-trails normalizes it through an
             internal .git/.bgit_cache pointer.
   --no-cache
             bypass the persistent store for digest/view commands. By
             default, computed digests are read from or written to
-            .git/.bgit_cache/blockcommit.
+            .git/.bgit_cache/git-trails.
   --view <type>
             choose a view: content, identity, identity-from, or identity-to.
             Defaults to content.

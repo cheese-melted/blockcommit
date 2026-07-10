@@ -17,9 +17,9 @@ npm pack --dry-run
 For broader reconstruction coverage, run:
 
 ```sh
-blockcommit cache --range <rev-range> --cwd <repo>
-blockcommit cache verify --range <rev-range> --cwd <repo>
-blockcommit digest --range <rev-range> --cwd <repo> --format jsonl --no-cache
+git trails cache --range <rev-range> --cwd <repo>
+git trails cache verify --range <rev-range> --cwd <repo>
+git trails digest --range <rev-range> --cwd <repo> --format jsonl --no-cache
 ```
 
 When run inside the repo, `--cwd` is optional.
@@ -38,7 +38,7 @@ import {
   validateDigest,
   verifyCommit,
   verifyDigest
-} from "blockcommit";
+} from "git-trails";
 
 const digest = digestCommit({ commit: "HEAD" });
 
